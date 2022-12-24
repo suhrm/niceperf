@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "latency",
-  "throughput"
+  "throughput",
+  "ping",
 ]
 

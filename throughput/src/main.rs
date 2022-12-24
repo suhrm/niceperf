@@ -1,5 +1,5 @@
+use clap::{Parser, Subcommand};
 use std::net::IpAddr;
-use clap::{Subcommand, Parser};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -7,14 +7,12 @@ struct Args {
     #[command(subcommand)]
     mode: Modes,
 
-
     #[arg(long, action = clap::ArgAction::SetTrue)]
-    dont_fragment: Option<bool>
+    dont_fragment: Option<bool>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Modes {
-
     /// Set Niceperf throughput to run in server mode
     #[command(arg_required_else_help = true)]
     Server {
@@ -32,7 +30,7 @@ enum Modes {
 
         /// Provide a config file instead of the options above
         #[arg(long)]
-        config_file: Option<String>
+        config_file: Option<String>,
     },
 
     /// Set Niceperf throughput to run in client mode
@@ -52,8 +50,8 @@ enum Modes {
 
         /// Provide a config file instead of the options above
         #[arg(long)]
-        config_file: Option<String>
-    }
+        config_file: Option<String>,
+    },
 }
 
 fn main() {
