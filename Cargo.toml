@@ -3,5 +3,6 @@ members = [
   "latency",
   "throughput",
   "ping",
+  "common",
 ]
 
