@@ -54,7 +54,7 @@ pub fn new_icmp_socket(
 }
 
 pub fn new_tcp_socket(
-    bind_interface: Option<&str>,
+    bind_interface: Option<String>,
     bind_address: IpAddr,
     bind_port: u16,
 ) -> Result<Socket> {
@@ -81,7 +81,7 @@ pub fn new_tcp_socket(
     };
 
     let socket = match bind_interface {
-        Some(bi) => bind_to_device(socket, bi)?,
+        Some(bi) => bind_to_device(socket, &bi)?,
         None => socket,
     };
 
