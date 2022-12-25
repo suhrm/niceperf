@@ -1,61 +1,32 @@
-use clap::{Parser, Subcommand};
-use std::net::IpAddr;
+use std::io;
+use clap::Parser;
 
-#[derive(Parser, Debug)]
-#[command(author, version, about)]
-struct Args {
-    #[command(subcommand)]
-    mode: Modes,
+mod args;
+mod tcpserver;
 
-    #[arg(long, action = clap::ArgAction::SetTrue)]
-    dont_fragment: Option<bool>,
-}
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args = args::Opts::parse();
 
-#[derive(Subcommand, Debug)]
-enum Modes {
-    /// Set Niceperf throughput to run in server mode
-    #[command(arg_required_else_help = true)]
-    Server {
-        /// IP the server will listen on
-        #[arg(short, long, conflicts_with = "config_file")]
-        server_ip: Option<IpAddr>,
+    println!("{:?}", args);
 
-        /// Port the server will listen on
-        #[arg(short, long, conflicts_with = "config_file")]
-        port: Option<u16>,
-
-        /// Interface to bind to
-        #[arg(short, long, conflicts_with = "config_file")]
-        interface: Option<String>,
-
-        /// Provide a config file instead of the options above
-        #[arg(long)]
-        config_file: Option<String>,
-    },
-
-    /// Set Niceperf throughput to run in client mode
-    #[command(arg_required_else_help = true)]
-    Client {
-        /// IP the client will listen on
-        #[arg(short, long)]
-        client_ip: Option<IpAddr>,
-
-        /// Port the client will listen on
-        #[arg(short, long)]
-        port: Option<u16>,
-
-        /// Interface to bind to
-        #[arg(short, long)]
-        interface: Option<String>,
-
-        /// Provide a config file instead of the options above
-        #[arg(long)]
-        config_file: Option<String>,
-    },
-}
-
-fn main() {
-    let args = Args::parse();
-
-    println!("{:?}", args)
+    return match args.mode {
+        Some(args::Modes::Server { proto }) => {
+            match proto {
+                args::ServerProtocol::Tcp(options) => {
+                    tcpserver::run(options).await
+                },
+                args::ServerProtocol::Udp(..) => {
+                    todo!()
+                },
+                args::ServerProtocol::Quic(..) => {
+                    todo!()
+                }
+            }
+        },
+        Some(args::Modes::Client { proto: _ }) => {
+            todo!()
+        },
+        None => { Ok({}) }
+    };
 }
