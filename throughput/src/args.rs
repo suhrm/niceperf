@@ -5,18 +5,18 @@ use std::net::IpAddr;
 #[command(author, version, about)]
 pub struct Opts {
     #[command(subcommand)]
-    mode: Option<Modes>,
+    pub mode: Option<Modes>,
 
     #[arg(long, action = clap::ArgAction::SetTrue)]
-    dont_fragment: Option<bool>,
+    pub dont_fragment: Option<bool>,
 
     /// Provide a config file instead of the options above
     #[arg(long)]
-    config_file: Option<String>,
+    pub config_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
-enum Modes {
+pub enum Modes {
     /// Set Niceperf throughput to run in server mode
     #[command(arg_required_else_help = true)]
     Server {
@@ -33,7 +33,7 @@ enum Modes {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum ServerProtocol {
+pub enum ServerProtocol {
     #[command(arg_required_else_help = true)]
     Tcp(TcpServerOpts),
 
@@ -45,25 +45,25 @@ enum ServerProtocol {
 }
 
 #[derive(Args, Clone, Debug)]
-struct TcpServerOpts {
+pub struct TcpServerOpts {
+    #[command(flatten)]
+    pub server_common_opts: ServerCommonOpts,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct UdpServerOpts {
     #[command(flatten)]
     server_common_opts: ServerCommonOpts,
 }
 
 #[derive(Args, Clone, Debug)]
-struct UdpServerOpts {
-    #[command(flatten)]
-    server_common_opts: ServerCommonOpts,
-}
-
-#[derive(Args, Clone, Debug)]
-struct QuicServerOpts {
+pub struct QuicServerOpts {
     #[command(flatten)]
     server_common_opts: ServerCommonOpts,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum ClientProtocol {
+pub enum ClientProtocol {
     #[command(arg_required_else_help = true)]
     Tcp(TcpClientOpts),
 
@@ -75,40 +75,40 @@ enum ClientProtocol {
 }
 
 #[derive(Args, Clone, Debug)]
-struct TcpClientOpts {
+pub struct TcpClientOpts {
     #[command(flatten)]
     client_common_opts: ClientCommonOpts,
 }
 
 #[derive(Args, Clone, Debug)]
-struct UdpClientOpts {
+pub struct UdpClientOpts {
     #[command(flatten)]
     client_common_opts: ClientCommonOpts,
 }
 
 #[derive(Args, Clone, Debug)]
-struct QuicClientOpts {
+pub struct QuicClientOpts {
     #[command(flatten)]
     client_common_opts: ClientCommonOpts,
 }
 
 #[derive(Args, Clone, Debug)]
-struct ServerCommonOpts {
+pub struct ServerCommonOpts {
     /// IP the server will listen on
     #[arg(short, long)]
-    server_ip: Option<IpAddr>,
+    pub server_ip: IpAddr,
 
     /// Port the server will listen on
     #[arg(short, long)]
-    port: Option<u16>,
+    pub port: u16,
 
     /// Interface to bind to
     #[arg(short, long)]
-    interface: Option<String>,
+    pub interface: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
-struct ClientCommonOpts {
+pub struct ClientCommonOpts {
     /// IP of the server
     #[arg(short = 'c', long = "client")]
     server_ip: Option<IpAddr>,
