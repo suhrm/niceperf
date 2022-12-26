@@ -14,3 +14,4 @@ bincode = "*"
 clap = { version = "4", features = ["derive"] }
 common = { path = "../common" }
 anyhow = {}
+
