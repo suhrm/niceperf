@@ -1,14 +1,9 @@
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-use anyhow::Result;
-
-
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct Packet {
-    packet_type: PacketType,
-    connection_id: u16
+    pub packet_type: PacketType,
+    pub connection_id: u16
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]

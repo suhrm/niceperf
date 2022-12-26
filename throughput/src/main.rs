@@ -1,4 +1,3 @@
-use std::io;
 use clap::Parser;
 
 mod args;
@@ -15,6 +14,7 @@ async fn main() -> anyhow::Result<()> {
         Some(args::Modes::Server { proto }) => {
             match proto {
                 args::ServerProtocol::Tcp(options) => {
+                    println!("Starting tcp server");
                     tcpserver::run(options).await
                 },
                 args::ServerProtocol::Udp(..) => {
