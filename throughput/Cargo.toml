@@ -10,3 +10,6 @@ common = { path = "../common" }
 clap = { version = "4.0.30", features = ['derive'] }
 tokio = { version = "1.23.0", features = ['full'] }
 anyhow = "1.0.68"
+tokio-util =  { version = "0.7.4", features = ["full"] }
+serde = { version = "1.0.151", features = ["derive"]}
+serde_bytes = "0.11.8"
