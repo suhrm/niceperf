@@ -3,6 +3,7 @@ use clap::Parser;
 
 mod args;
 mod tcpserver;
+mod messages;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
