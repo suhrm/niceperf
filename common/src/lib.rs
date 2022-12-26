@@ -2,16 +2,49 @@ use anyhow::{anyhow, Result};
 use pnet_datalink;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{IpAddr, SocketAddrV4, SocketAddrV6};
+use std::os::unix::io::AsRawFd;
+use std::os::unix::io::RawFd;
 
-// Create new ICMP socket, default to IPv4
-pub fn new_icmp_socket(
-    bind_interface: Option<&str>,
-    bind_address: Option<IpAddr>,
-) -> Result<Socket> {
-    // Check bind_addr is an IPv4 or IPv6 address
-    let socket = match bind_address {
-        Some(addr) => match addr {
-            IpAddr::V4(_) => {
+// Strong types for the different protocols
+pub struct ICMPSocket(Socket);
+
+impl ICMPSocket {
+    pub fn new(
+        bind_interface: Option<&str>,
+        bind_address: Option<IpAddr>,
+    ) -> Result<ICMPSocket> {
+        // Check bind_addr is an IPv4 or IPv6 address
+        let socket = match bind_address {
+            Some(addr) => match addr {
+                IpAddr::V4(_) => {
+                    let socket = Socket::new(
+                        Domain::IPV4,
+                        Type::RAW,
+                        Some(Protocol::ICMPV4),
+                    )?;
+                    socket.set_nonblocking(true)?;
+
+                    match bind_interface {
+                        Some(bi) => bind_to_device(socket, bi)?,
+                        None => socket,
+                    }
+                }
+
+                IpAddr::V6(_) => {
+                    let socket = Socket::new(
+                        Domain::IPV6,
+                        Type::RAW,
+                        Some(Protocol::ICMPV6),
+                    )?;
+                    socket.set_nonblocking(true)?;
+
+                    match bind_interface {
+                        Some(bi) => bind_to_device(socket, bi)?,
+                        None => socket,
+                    }
+                }
+            },
+            None => {
                 let socket = Socket::new(
                     Domain::IPV4,
                     Type::RAW,
@@ -24,35 +57,25 @@ pub fn new_icmp_socket(
                     None => socket,
                 }
             }
+        };
 
-            IpAddr::V6(_) => {
-                let socket = Socket::new(
-                    Domain::IPV6,
-                    Type::RAW,
-                    Some(Protocol::ICMPV6),
-                )?;
-                socket.set_nonblocking(true)?;
-
-                match bind_interface {
-                    Some(bi) => bind_to_device(socket, bi)?,
-                    None => socket,
-                }
-            }
-        },
-        None => {
-            let socket =
-                Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?;
-            socket.set_nonblocking(true)?;
-
-            match bind_interface {
-                Some(bi) => bind_to_device(socket, bi)?,
-                None => socket,
-            }
-        }
-    };
-
-    Ok(socket)
+        Ok(ICMPSocket(socket))
+    }
+    pub fn get_mut(&mut self) -> &mut Socket {
+        &mut self.0
+    }
+    pub fn get_ref(&self) -> &Socket {
+        &self.0
+    }
 }
+
+impl AsRawFd for ICMPSocket {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0.as_raw_fd()
+    }
+}
+
+// Create new ICMP socket, default to IPv4
 
 pub fn new_tcp_socket(
     bind_interface: Option<String>,

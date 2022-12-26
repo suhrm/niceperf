@@ -1,9 +1,11 @@
 use clap::Parser;
 mod args;
 use anyhow::{anyhow, Result};
-use common::{interface_to_ipaddr, new_icmp_socket};
+use common::{interface_to_ipaddr, ICMPSocket};
+use core::mem::MaybeUninit;
 use socket2::Socket;
 use std::net::IpAddr;
+use tokio::io::unix::AsyncFd;
 
 fn main() {
     let args = args::Opts::parse();
@@ -11,7 +13,7 @@ fn main() {
 
 struct ICMPClient {
     /// ICMP socket
-    socket: Socket,
+    socket: ICMPSocket,
     /// Interface to bind to
     iface: String,
     /// Src IP address of the socket
@@ -33,7 +35,7 @@ impl ICMPClient {
         let iface = iface.as_str();
         let src_addr = interface_to_ipaddr(iface)?;
         let dst_addr = args.dst_addr;
-        let socket = new_icmp_socket(Some(iface), None)?;
+        let socket = ICMPSocket::new(Some(iface), None)?;
         Ok(ICMPClient {
             socket,
             iface: iface.to_string(),
@@ -46,5 +48,38 @@ impl ICMPClient {
     }
     pub async fn run(&mut self) -> Result<()> {
         Ok(())
+    }
+}
+
+struct AsyncICMP {
+    inner: AsyncFd<ICMPSocket>,
+}
+
+impl AsyncICMP {
+    pub fn new(socket: ICMPSocket) -> Result<AsyncICMP> {
+        Ok(AsyncICMP {
+            inner: AsyncFd::new(socket)?,
+        })
+    }
+
+    /* pub async fn send(&mut self, packet: &[u8]) -> Result<()> {
+        let mut guard = self.inner.writable().await;
+        guard.try_io(|inner| inner.get_mut().send(packet))?;
+        Ok(())
+    } */
+
+    pub async fn recv(&mut self, buf: &mut [u8]) -> Result<usize> {
+        loop {
+            let mut guard = self.inner.readable().await?;
+            let uninit_slice = unsafe { core::mem::transmute(&mut *buf) };
+
+            match guard
+                .try_io(|inner| inner.get_ref().get_ref().recv(uninit_slice))
+            {
+                Ok(Ok(n)) => return Ok(n),
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_would_block) => continue,
+            }
+        }
     }
 }
