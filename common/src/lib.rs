@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use pnet_datalink;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{IpAddr, SocketAddrV4, SocketAddrV6};
 
@@ -108,4 +109,21 @@ pub fn bind_to_device(
     }
 
     Ok(socket)
+}
+
+// Get the IP address of the interface in case bind_address is not specified but bind_interface is.
+pub fn interface_to_ipaddr(interface: &str) -> Result<IpAddr> {
+    let interfaces = pnet_datalink::interfaces();
+    let interface = interfaces
+        .into_iter()
+        .find(|iface| iface.name == interface)
+        .ok_or_else(|| anyhow!("interface not found"))?;
+
+    let ipaddr = interface
+        .ips
+        .into_iter()
+        .find(|ip| ip.is_ipv4() || ip.is_ipv6())
+        .ok_or_else(|| anyhow!("interface has no IPv4 or IPv6 address"))?;
+
+    Ok(ipaddr.ip())
 }

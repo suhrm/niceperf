@@ -28,7 +28,7 @@ enum Modes {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum Protocol {
+pub enum Protocol {
     #[command(arg_required_else_help = true)]
     /// Set Niceperf ping to run in TCP mode
     Tcp(TCPOpts),
@@ -41,46 +41,46 @@ enum Protocol {
 }
 
 #[derive(Args, Clone, Debug)]
-struct CommonOpts {
+pub struct CommonOpts {
     /// length of the payload
     #[arg(long, short, default_value = "64")]
-    len: Option<usize>,
+    pub len: Option<usize>,
     /// interval between packets in Seconds
     #[arg(long, default_value = "1")]
-    interval: Option<u64>,
+    pub interval: Option<u64>,
     /// number of packets to send
     #[arg(long, short, conflicts_with = "duration")]
-    count: Option<u64>,
+    pub count: Option<u64>,
     #[arg(long, short)]
     /// Interface to bind to
-    iface: Option<String>,
+    pub iface: Option<String>,
     /// Duration of the test in seconds (mutually exclusive with count)
     #[arg(long, short, conflicts_with = "count")]
-    duration: Option<u64>,
+    pub duration: Option<u64>,
 }
 #[derive(Args, Clone, Debug)]
-struct TCPOpts {
+pub struct TCPOpts {
     #[command(flatten)]
-    common_opts: CommonOpts,
+    pub common_opts: CommonOpts,
     /// Set the source port
     #[arg(long)]
-    src_port: Option<u16>,
+    pub src_port: Option<u16>,
     /// Set the destination port
     #[arg(long)]
-    dst_port: Option<u16>,
+    pub dst_port: Option<u16>,
     /// Set the destination address
     #[arg(long)]
-    dst_addr: Option<IpAddr>,
+    pub dst_addr: Option<IpAddr>,
     /// Congetion control algorithm to use
     #[arg(long, default_value = "reno")]
-    cc: Option<String>,
+    pub cc: Option<String>,
     /// Maximum segment size
     #[arg(long, short, default_value = "1460")]
-    mss: Option<u16>,
+    pub mss: Option<u16>,
 }
 
 #[derive(Args, Clone, Debug)]
-struct UDPOpts {
+pub struct UDPOpts {
     #[command(flatten)]
     common_opts: CommonOpts,
     /// Set the source port
@@ -94,10 +94,11 @@ struct UDPOpts {
     dst_addr: Option<IpAddr>,
 }
 #[derive(Args, Clone, Debug)]
-struct ICMPOpts {
+pub struct ICMPOpts {
     #[command(flatten)]
-    common_opts: CommonOpts,
+    pub common_opts: CommonOpts,
     /// Set the destination address
     #[arg(long, short)]
-    dst_addr: Option<IpAddr>,
+    pub dst_addr: IpAddr,
+    pub preload: Option<u64>,
 }
