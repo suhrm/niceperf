@@ -5,4 +5,5 @@ members = [
   "ping",
   "common",
 ]
-
+[workspace.dependencies]
+anyhow = "1.0.68" 

@@ -9,4 +9,4 @@ edition = "2021"
 common = { path = "../common" }
 clap = { version = "4.0.30", features = ['derive'] }
 tokio = { version = "1.23.0", features = ['full'] }
-anyhow = "1.0.68"
+anyhow = {}

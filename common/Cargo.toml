@@ -9,3 +9,4 @@ edition = "2021"
 socket2 = { version = "0.4.7", features = ["all"] }
 anyhow = "1.0.68"
 libc = "0.2.139"
+pnet_datalink = "0.31.0"
