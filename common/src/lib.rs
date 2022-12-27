@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use pnet_datalink;
 use socket2::{Domain, Protocol, Socket, Type};
-use std::net::{IpAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 use tokio::io::unix::AsyncFd;
@@ -137,24 +137,18 @@ impl AsyncICMPSocket {
 pub fn new_tcp_socket(
     bind_interface: Option<String>,
     bind_address: IpAddr,
-    bind_port: u16,
+    bind_port: Option<u16>,
 ) -> Result<Socket> {
-    let socket = match bind_address {
-        IpAddr::V4(address) => {
-            let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
 
-            let socket_address = SocketAddrV4::new(address, bind_port);
-            socket.bind(&socket_address.into())?;
+    let socket = match bind_address {
+        IpAddr::V4(..) => {
+            let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
             socket.set_nonblocking(true)?;
 
             socket
         }
-        IpAddr::V6(address) => {
+        IpAddr::V6(..) => {
             let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
-
-            // TODO: Figure out what is the correct way to use flowinfo and scope_id of IPv6 Sockets.
-            let socket_address = SocketAddrV6::new(address, bind_port, 0, 0);
-            socket.bind(&socket_address.into())?;
             socket.set_nonblocking(true)?;
 
             socket
@@ -165,6 +159,20 @@ pub fn new_tcp_socket(
         Some(bi) => bind_to_device(socket, &bi)?,
         None => socket,
     };
+
+    match bind_port {
+        // Bind to provided port
+        Some(port) => {
+            let socket_address = SocketAddr::new( bind_address, port);
+            socket.bind(&socket_address.into())?;
+        },
+        // Otherwise request an ephemeral port
+        None => {
+            let socket_address = SocketAddr::new( bind_address, 0);
+            socket.bind(&socket_address.into())?;
+        }
+    }
+
 
     Ok(socket)
 }
