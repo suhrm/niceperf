@@ -1,17 +1,19 @@
-use tokio::net::{TcpListener, TcpStream};
-use common::new_tcp_socket;
 use crate::args::TcpServerOpts;
-use anyhow::{Result, Error};
+use anyhow::{Error, Result};
+use bytes::BytesMut;
+use common::new_tcp_socket;
+use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use futures_util::StreamExt;
 use crate::messages;
+use futures_util::{StreamExt, TryStreamExt};
+use tokio::select;
 
 pub async fn run(options: TcpServerOpts) -> Result<()> {
     let socket = new_tcp_socket(
         options.server_common_opts.interface,
         options.server_common_opts.server_ip,
-        options.server_common_opts.port
+        Some(options.server_common_opts.port),
     )?;
 
     socket.listen(128)?;
@@ -23,7 +25,6 @@ pub async fn run(options: TcpServerOpts) -> Result<()> {
         println!("Handling connection");
         handle_stream(stream).await?
     }
-
 }
 
 async fn handle_stream(mut stream: TcpStream) -> Result<()> {
@@ -33,27 +34,35 @@ async fn handle_stream(mut stream: TcpStream) -> Result<()> {
     let _f_writer = FramedWrite::new(writer, LengthDelimitedCodec::new());
 
     loop {
-        if let Some(received) = f_reader.next().await {
-            match received {
-                Ok(received) => {
-                    let decoded: messages::Packet = bincode::deserialize(&received)?;
-
-                    match decoded.packet_type {
-                        messages::PacketType::SideChannel(_sch) => {
-                            todo!()
-                        },
-                        messages::PacketType::Throughput(tp) => {
-                            println!("Got TP packet, conn_id: {}, payload_size: {} bytes",
-                                     decoded.connection_id, tp.payload.len())
+        select! {
+            received = f_reader.try_next() => {
+                match received {
+                    Ok(received) => {
+                        match received {
+                            Some(packet) => {
+                                handle_packet(&packet).await?
+                            },
+                            None => {
+                                return Ok(())
+                            }
                         }
-
+                            },
+                    Err(e) => {
+                        return Err(Error::from(e))
                     }
-                },
-                Err(e) => {
-                    return Err(Error::from(e))
                 }
             }
+        }
+    }
+}
 
+
+async fn handle_packet(packet: &BytesMut) -> Result<()> {
+    match bincode::deserialize(packet)? {
+        messages::PacketType::SideChannel(_sch) => {todo!()},
+        messages::PacketType::Throughput(tp) => {
+            println!("Got TP packet with conn_id: {} and length: {}", tp.connection_id, tp.payload.len());
+            Ok(())
         }
     }
 }

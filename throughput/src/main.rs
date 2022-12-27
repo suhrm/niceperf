@@ -2,6 +2,7 @@ use clap::Parser;
 
 mod args;
 mod tcpserver;
+mod tcpclient;
 mod messages;
 
 #[tokio::main]
@@ -25,8 +26,18 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         },
-        Some(args::Modes::Client { proto: _ }) => {
-            todo!()
+        Some(args::Modes::Client { proto }) => {
+            match proto {
+                args::ClientProtocol::Tcp(options) => {
+                    tcpclient::run(options).await
+                },
+                args::ClientProtocol::Udp(..) => {
+                    todo!()
+                },
+                args::ClientProtocol::Quic(..) => {
+                    todo!()
+                }
+            }
         },
         None => { Ok({}) }
     };
