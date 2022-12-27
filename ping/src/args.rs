@@ -5,13 +5,13 @@ use std::net::IpAddr;
 #[command(author, version, about)]
 pub struct Opts {
     #[command(subcommand)]
-    mode: Modes,
+    pub mode: Modes,
     #[arg(long, action = clap::ArgAction::SetTrue)]
     dont_fragment: Option<bool>,
 }
 
 #[derive(Subcommand, Debug)]
-enum Modes {
+pub enum Modes {
     /// Set Niceperf throughput to run in server mode
     #[command(arg_required_else_help = true)]
     Server {
@@ -98,7 +98,7 @@ pub struct ICMPOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
     /// Set the destination address
-    #[arg(long, short)]
+    #[arg(long)]
     pub dst_addr: IpAddr,
     pub preload: Option<u64>,
 }
