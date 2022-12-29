@@ -78,7 +78,7 @@ pub enum ClientProtocol {
 #[derive(Args, Clone, Debug)]
 pub struct TcpClientOpts {
     #[command(flatten)]
-    client_common_opts: ClientCommonOpts,
+    pub client_common_opts: ClientCommonOpts,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -90,7 +90,7 @@ pub struct UdpClientOpts {
 #[derive(Args, Clone, Debug)]
 pub struct QuicClientOpts {
     #[command(flatten)]
-    client_common_opts: ClientCommonOpts,
+    pub client_common_opts: ClientCommonOpts,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -112,13 +112,22 @@ pub struct ServerCommonOpts {
 pub struct ClientCommonOpts {
     /// IP of the server
     #[arg(short = 'c', long = "client")]
-    server_ip: Option<IpAddr>,
+    pub server_ip: IpAddr,
 
     /// Port of the server
-    #[arg(short, long)]
-    port: Option<u16>,
+    #[arg(short = 'p', long)]
+    pub server_port: u16,
 
     /// Interface to bind to
     #[arg(short, long)]
-    interface: Option<String>,
+    pub interface: Option<String>,
+
+    /// Clients own interface on which to bind
+    #[arg(long = "cip")]
+    pub client_ip: IpAddr,
+
+    /// Port the client will bind to locally.
+    /// Leave empty to use an ephemeral port
+    #[arg(long = "cport")]
+    pub client_port: Option<u16>,
 }
