@@ -20,6 +20,7 @@ pub async fn run(options: TcpClientOpts) -> Result<()> {
         options.client_common_opts.server_port);
     socket.set_nonblocking(false)?;
     socket.connect(&server_address.into())?;
+    socket.set_nonblocking(true)?;
     let mut client = TcpStream::from_std(socket.into())?;
 
     let (reader, writer) = client.split();
