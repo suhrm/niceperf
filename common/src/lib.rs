@@ -4,6 +4,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{IpAddr, SocketAddrV4, SocketAddrV6};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
+use tokio::io::unix::AsyncFd;
 
 // Strong types for the different protocols
 pub struct ICMPSocket(Socket);
@@ -72,6 +73,62 @@ impl ICMPSocket {
 impl AsRawFd for ICMPSocket {
     fn as_raw_fd(&self) -> RawFd {
         self.0.as_raw_fd()
+    }
+}
+pub struct AsyncICMPSocket {
+    inner: AsyncFd<ICMPSocket>,
+}
+
+impl AsyncICMPSocket {
+    pub fn new(socket: ICMPSocket) -> Result<Self> {
+        Ok(Self {
+            inner: AsyncFd::new(socket)?,
+        })
+    }
+
+    pub async fn send_to(
+        &mut self,
+        packet: &[u8],
+        addr: &IpAddr,
+    ) -> Result<(usize)> {
+        let mut guard = self.inner.writable().await?;
+        let addr = match addr {
+            IpAddr::V4(addr) => {
+                let addr = std::net::SocketAddr::V4(
+                    std::net::SocketAddrV4::new(*addr, 0),
+                );
+                socket2::SockAddr::from(addr)
+            }
+            IpAddr::V6(addr) => {
+                // TODO : Check if this is correct
+                let addr = std::net::SocketAddr::V6(
+                    std::net::SocketAddrV6::new(*addr, 0, 0, 0),
+                );
+                socket2::SockAddr::from(addr)
+            }
+        };
+        match guard
+            .try_io(|inner| inner.get_ref().get_ref().send_to(packet, &addr))
+        {
+            Ok(res) => Ok(res?),
+            Err(e) => Err(anyhow!("Error sending packet")),
+        }
+    }
+
+    pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        loop {
+            let mut guard = self.inner.readable().await?;
+            // Safety: We are sure that the buffer is initialized
+            let uninit_slice = unsafe { core::mem::transmute(&mut *buf) };
+
+            match guard
+                .try_io(|inner| inner.get_ref().get_ref().recv(uninit_slice))
+            {
+                Ok(Ok(n)) => return Ok(n),
+                Ok(Err(e)) => Err(anyhow!(e.to_string()))?,
+                Err(_would_block) => continue,
+            }
+        }
     }
 }
 
