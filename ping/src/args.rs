@@ -1,5 +1,6 @@
-use clap::{Args, Parser, Subcommand};
 use std::net::IpAddr;
+
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -45,8 +46,8 @@ pub struct CommonOpts {
     /// length of the payload
     #[arg(long, short, default_value = "64")]
     pub len: Option<usize>,
-    /// interval between packets in Seconds
-    #[arg(long, default_value = "1")]
+    /// interval between packets in miliseconds
+    #[arg(long, default_value = "1000")]
     pub interval: Option<u64>,
     /// number of packets to send
     #[arg(long, short, conflicts_with = "duration")]
@@ -57,6 +58,12 @@ pub struct CommonOpts {
     /// Duration of the test in seconds (mutually exclusive with count)
     #[arg(long, short, conflicts_with = "count")]
     pub duration: Option<u64>,
+    /// Save the result to a file
+    #[arg(long, short)]
+    pub file: Option<String>,
+    /// Set the amount of packets to preload before following the interval
+    #[arg(long, default_value = "1")]
+    pub preload: Option<u64>,
 }
 #[derive(Args, Clone, Debug)]
 pub struct TCPOpts {
@@ -100,5 +107,4 @@ pub struct ICMPOpts {
     /// Set the destination address
     #[arg(long)]
     pub dst_addr: IpAddr,
-    pub preload: Option<u64>,
 }
