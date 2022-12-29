@@ -4,11 +4,12 @@ use anyhow::{anyhow, Result};
 use common::{interface_to_ipaddr, ICMPSocket};
 use core::mem::MaybeUninit;
 use etherparse::{
-    ip_number, Icmpv4Type, IpHeader, Ipv4Header, Ipv4HeaderSlice,
-    PacketBuilder, TransportHeader,
+    ip_number, IcmpEchoHeader, Icmpv4Header, Icmpv4Type, IpHeader,
+    Ipv4HeaderSlice, PacketBuilder, TransportHeader,
 };
 use socket2::Socket;
 use std::net::IpAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::unix::AsyncFd;
 
 #[tokio::main(flavor = "current_thread")]
@@ -57,6 +58,10 @@ struct ICMPClient {
     internal_couter: u128,
     /// How many packets preload before following specified interval.
     preload: u64,
+    /// Payload size of each packet
+    payload_size: usize,
+    /// Identifier of ICMP packets (This is random by default)
+    identifier: u16,
 }
 
 impl ICMPClient {
@@ -78,6 +83,8 @@ impl ICMPClient {
             internal_couter: 0,
             // TODO: Check what ping does
             preload: args.preload.unwrap_or(1),
+            payload_size: args.common_opts.len.unwrap_or(56),
+            identifier: rand::random::<u16>(),
         })
     }
     pub async fn run(&mut self) -> Result<()> {
@@ -95,45 +102,63 @@ impl ICMPClient {
                 return Err(anyhow!("IPv6 is not supported yet"));
             }
         };
+
         let mut buf = [0u8; 1500];
 
         let timeout_tracker =
             tokio::time::interval(std::time::Duration::from_millis(1000));
+        let mut payload = vec![0u8; self.payload_size - 8];
 
         loop {
             tokio::select! {
                 _ = pacing_timer.tick() => {
-                    println!("Tick");
-                    println!("Sending packet");
-                    println!("Internal counter: {}", self.internal_couter);
-                    println!("dst_addr: {}", dst_addr);
-                    println!("src_addr: {}", src_addr);
                     // Build ICMP packet
-                    // TODO: We have an ICMP socket so we dont need to build ip
-                    // but PacketBuilder expects it as an entry point.
-                    let builder = PacketBuilder::ipv4(
-                                src_addr.octets(),
-                                dst_addr.octets(),
-                                64,
-                        ).icmpv4_raw(
-                            8,
-                            0,
-                            [1, 2, 3, 4],
-                        );
-                    let payload = b"Hello world";
-                    let mut packet = Vec::with_capacity(builder.size(payload.len()));
-                    builder.write(&mut packet,payload).unwrap();
-                    println!("Packet: {:x?}", packet);
-                    self.socket.send_to(&packet[20..], &self.dst_addr).await?;
+                    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+                    // Put timestamp in the payload
+                    payload[..16].copy_from_slice(&timestamp.to_be_bytes());
+
+                    let icmp_packet = [Icmpv4Header::with_checksum(
+                        Icmpv4Type::EchoRequest(IcmpEchoHeader {
+                            id: self.identifier, // Identifier
+                            seq: self.internal_couter as u16, // Sequence number
+                        }),
+                        payload.as_slice(), // Payload for checksum
+                    ).to_bytes().as_slice(), payload.as_slice()].concat(); // Concatenate header and payload
+                    self.socket.send_to(&icmp_packet, &self.dst_addr).await?;
                     self.internal_couter += 1;
-
-
-
-
-
-
                 },
-                _ = self.socket.read(&mut buf) => { }
+                Ok(len) = self.socket.read(&mut buf) => {
+                // TODO: Handle ICMP packet
+               let icmp_header = Icmpv4Header::from_slice(&buf[20..len])?;
+
+               let reply_header = match icmp_header.0.icmp_type {
+                   Icmpv4Type::EchoReply(header) => {
+                       // Check if the packet is a reply to our packet
+                       if header.id == self.identifier {
+                           header
+                          } else {
+                              println!("Received reply, but not our packet");
+                                continue;
+
+                            }
+                   },
+                   _ => {
+                       println!("Received non-echo reply packet");
+                       continue;
+                   }
+               };
+
+               let reply_payload = icmp_header.1;
+               let reply_timestamp = u128::from_be_bytes(reply_payload[..16].try_into()?);
+               let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+               let rtt = ((timestamp - reply_timestamp) as f64)/ 1e6;
+
+               println!("{} bytes from {}: icmp_seq={} ttl={} time={} ms", len -20 , dst_addr, reply_header.seq, buf[8], rtt );
+
+
+
+                }
+
             }
         }
     }
@@ -156,13 +181,11 @@ impl AsyncICMPSocket {
         addr: &IpAddr,
     ) -> Result<(usize)> {
         let mut guard = self.inner.writable().await?;
-        println!("Addr: {:?}", addr);
         let addr = match addr {
             IpAddr::V4(addr) => {
                 let addr = std::net::SocketAddr::V4(
                     std::net::SocketAddrV4::new(*addr, 0),
                 );
-                println!("Addr: {:?}", addr);
                 socket2::SockAddr::from(addr)
             }
             IpAddr::V6(addr) => {
@@ -173,9 +196,6 @@ impl AsyncICMPSocket {
                 socket2::SockAddr::from(addr)
             }
         };
-        println!("Sending packet");
-        println!("Packet: {:x?}", packet);
-        println!("Addr: {:?}", addr);
         match guard
             .try_io(|inner| inner.get_ref().get_ref().send_to(packet, &addr))
         {
