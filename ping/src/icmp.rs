@@ -12,8 +12,13 @@ use etherparse::{
 };
 use socket2::Socket;
 
-use crate::args;
+use crate::{
+    args,
+    logger::{PingLogger, PingResult},
+};
 pub struct ICMPClient {
+    /// Logger
+    logger: Option<PingLogger>,
     /// Common options
     common: args::CommonOpts,
     /// ICMP socket
@@ -41,6 +46,11 @@ impl ICMPClient {
         let dst_addr = args.dst_addr;
         let socket = ICMPSocket::new(Some(iface), None)?;
 
+        let logger = match args.common_opts.file.clone() {
+            Some(file_name) => Some(PingLogger::new(file_name)?),
+            None => None,
+        };
+
         Ok(ICMPClient {
             socket: AsyncICMPSocket::new(socket)?,
             common: args.common_opts,
@@ -49,6 +59,7 @@ impl ICMPClient {
             internal_couter: 0,
             //Safety: Safe to unwrap because we have a default value
             identifier: rand::random::<u16>(),
+            logger,
         })
     }
     pub async fn run(&mut self) -> Result<()> {
@@ -98,7 +109,7 @@ impl ICMPClient {
                     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
                     // Put timestamp in the payload
                     payload[..16].copy_from_slice(&timestamp.to_be_bytes());
-
+                    payload[16..32].copy_from_slice(&self.internal_couter.to_be_bytes());
                     let icmp_packet = match self.dst_addr {
                         IpAddr::V4(_) =>{
                     [Icmpv4Header::with_checksum(
@@ -120,7 +131,6 @@ impl ICMPClient {
                     self.internal_couter += 1;
                 },
                 Ok(len) = self.socket.read(&mut buf) => {
-                // TODO: Handle ICMP packet
                let icmp_header = Icmpv4Header::from_slice(&buf[20..len])?;
 
                let reply_header = match icmp_header.0.icmp_type {
@@ -144,8 +154,22 @@ impl ICMPClient {
                let reply_timestamp = u128::from_be_bytes(reply_payload[..16].try_into()?);
                let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
                let rtt = ((timestamp - reply_timestamp) as f64)/ 1e6;
-
-               println!("{} bytes from {}: icmp_seq={} ttl={} time={} ms", len -20 , dst_addr, reply_header.seq, buf[8], rtt );
+               let ttl = buf[8];
+               let seq_internal = u128::from_be_bytes(reply_payload[16..32].try_into()?);
+               let result = PingResult {
+                   seq: reply_header.seq,
+                   rtt,
+                   recv_time: timestamp,
+                   send_time: reply_timestamp,
+                   size: len - 20,
+                   ttl,
+                   src_addr: self.src_addr.to_string(),
+                   dst_addr: self.dst_addr.to_string(),
+                   unique_seq: seq_internal,
+               };
+               if self.logger.is_some() {
+                   self.logger.as_mut().unwrap().log(&result).await?;
+               }
 
 
 

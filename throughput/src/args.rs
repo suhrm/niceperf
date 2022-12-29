@@ -1,5 +1,6 @@
-use clap::{Args, Parser, Subcommand};
 use std::net::IpAddr;
+
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]

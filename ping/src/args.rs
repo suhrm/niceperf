@@ -59,7 +59,7 @@ pub struct CommonOpts {
     #[arg(long, short, conflicts_with = "count")]
     pub duration: Option<u64>,
     /// Save the result to a file
-    #[arg(long, short)]
+    #[arg(long)]
     pub file: Option<String>,
     /// Set the amount of packets to preload before following the interval
     #[arg(long, default_value = "1")]
