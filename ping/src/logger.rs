@@ -13,7 +13,10 @@ impl PingLogger {
 
         Ok(PingLogger { logger })
     }
-    pub async fn log(&mut self, msg: &PingResult) -> Result<()> {
+    pub async fn log<T>(&mut self, msg: &T) -> Result<()>
+    where
+        T: fmt::Display,
+    {
         self.logger.write_all(msg.to_string().as_bytes()).await?;
         Ok(())
     }
@@ -53,5 +56,31 @@ impl PingResult {
     pub fn header() -> String {
         "seq,unique_seq,ttl,rtt,size,send_time,recv_time,dst_addr,src_addr\n"
             .to_string()
+    }
+}
+
+pub struct UDPEchoResult {
+    pub seq: u128,
+    pub send_timestamp: u128,
+    pub server_timestamp: u128,
+    pub recv_timestamp: u128,
+    pub rtt: f64,
+    pub src_addr: String,
+    pub dst_addr: String,
+}
+
+impl fmt::Display for UDPEchoResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{},{},{},{},{},{},{}\n",
+            self.seq,
+            self.send_timestamp,
+            self.server_timestamp,
+            self.recv_timestamp,
+            self.rtt,
+            self.dst_addr,
+            self.src_addr
+        )
     }
 }

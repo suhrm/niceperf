@@ -140,11 +140,11 @@ pub struct UDPSocket(Socket);
 impl UDPSocket {
     pub fn new(
         bind_interface: Option<&str>,
-        bind_address: Option<IpAddr>,
+        bind_address: Option<(IpAddr, u16)>,
     ) -> Result<UDPSocket> {
         // Check bind_addr is an IPv4 or IPv6 address
         let socket = match bind_address {
-            Some(addr) => match addr {
+            Some(addr) => match addr.0 {
                 IpAddr::V4(_) => {
                     let socket = Socket::new(
                         Domain::IPV4,
@@ -187,6 +187,20 @@ impl UDPSocket {
                 }
             }
         };
+        match bind_address {
+            // Bind to the address and an ephemeral port
+            Some((addr, 0)) => {
+                let socket_address = SocketAddr::new(addr, 0);
+                socket.bind(&socket_address.into())?;
+            }
+            // Bind to provided port and address
+            Some((addr, port)) => {
+                let socket_address = SocketAddr::new(addr, port);
+                socket.bind(&socket_address.into())?;
+            }
+            // Otherwise request an ephemeral port
+            None => {}
+        }
 
         Ok(UDPSocket(socket))
     }
