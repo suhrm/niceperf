@@ -2,6 +2,7 @@ use clap::Parser;
 mod args;
 mod icmp;
 mod logger;
+mod udp;
 use anyhow::Result;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {

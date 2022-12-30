@@ -85,20 +85,21 @@ pub struct TCPOpts {
     #[arg(long, short, default_value = "1460")]
     pub mss: Option<u16>,
 }
-
+// TODO:: Handle server and client options for UDP separately?
 #[derive(Args, Clone, Debug)]
 pub struct UDPOpts {
     #[command(flatten)]
-    common_opts: CommonOpts,
-    /// Set the source port
+    pub common_opts: CommonOpts,
+    // TODO: is Src Port needed?
+    /* /// Set the source port
     #[arg(long, short)]
-    src_port: Option<u16>,
+    pub src_port: Option<u16>, */
     /// Set the destination port
     #[arg(long, short)]
-    dst_port: Option<u16>,
+    pub dst_port: u16,
     /// Set the destination address
     #[arg(long, short)]
-    dst_addr: Option<IpAddr>,
+    pub dst_addr: IpAddr,
 }
 #[derive(Args, Clone, Debug)]
 pub struct ICMPOpts {

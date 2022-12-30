@@ -151,23 +151,24 @@ impl ICMPClient {
                };
 
                let reply_payload = icmp_header.1;
-               let reply_timestamp = u128::from_be_bytes(reply_payload[..16].try_into()?);
-               let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-               let rtt = ((timestamp - reply_timestamp) as f64)/ 1e6;
+               let send_time = u128::from_be_bytes(reply_payload[..16].try_into()?);
+               let recv_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+               let rtt = ((recv_time - send_time) as f64)/ 1e6;
                let ttl = buf[8];
                let seq_internal = u128::from_be_bytes(reply_payload[16..32].try_into()?);
                let result = PingResult {
                    seq: reply_header.seq,
                    rtt,
-                   recv_time: timestamp,
-                   send_time: reply_timestamp,
-                   size: len - 20,
+                   send_time,
+                   recv_time,
+                   size: len - 20, // We need to subtract the IP header size
                    ttl,
                    src_addr: self.src_addr.to_string(),
                    dst_addr: self.dst_addr.to_string(),
                    unique_seq: seq_internal,
                };
                if self.logger.is_some() {
+                   // Safety: Safe to unwrap because the file is some
                    self.logger.as_mut().unwrap().log(&result).await?;
                }
 
