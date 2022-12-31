@@ -24,6 +24,7 @@ pub struct TCPClient {
     src_port: Option<u16>,
     dst_port: u16,
     logger: Option<PingLogger>,
+    cc: String,
 }
 
 impl TCPClient {

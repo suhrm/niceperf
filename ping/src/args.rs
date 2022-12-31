@@ -69,15 +69,16 @@ pub struct CommonOpts {
 pub struct TCPOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
+    // TODO: Same as with UDP, do we need the source port and address?
     /// Set the source port
-    #[arg(long)]
-    pub src_port: Option<u16>,
+    // #[arg(long)]
+    // pub src_port: Option<u16>,
     /// Set the destination port
     #[arg(long)]
-    pub dst_port: Option<u16>,
+    pub dst_port: u16,
     /// Set the destination address
     #[arg(long)]
-    pub dst_addr: Option<IpAddr>,
+    pub dst_addr: IpAddr,
     /// Congetion control algorithm to use
     #[arg(long, default_value = "reno")]
     pub cc: Option<String>,
