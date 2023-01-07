@@ -40,3 +40,32 @@ async fn main() -> Result<()> {
     };
     Ok(())
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn icmp() {
+        let o = std::process::Command::new("pytest")
+            .arg("integration_test/test_icmp.py")
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+    }
+    #[test]
+    fn tcp() {
+        let o = std::process::Command::new("pytest")
+            .arg("integration_test/test_tcp.py")
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+    }
+    #[test]
+    fn udp() {
+        let o = std::process::Command::new("pytest")
+            .arg("integration_test/test_udp.py")
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+    }
+}

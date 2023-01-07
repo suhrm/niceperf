@@ -1,0 +1,4 @@
+git+ssh://git@github.com/steinwurf/dummynet.git@6ed5f468a02a0d13d8bed91dacd7757fb1a34090
+pytest
+pytest-asyncio
+addict
