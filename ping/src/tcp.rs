@@ -1,21 +1,26 @@
 use std::{
     collections::HashMap,
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
-use common::{interface_to_ipaddr, UDPSocket};
+use common::{interface_to_ipaddr, TCPSocket};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::net::UdpSocket as tokioUdpSocket;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream},
+};
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 use crate::{
     args,
-    logger::{PingLogger, UDPEchoResult},
+    logger::{PingLogger, TCPEchoResult},
 };
 
 pub struct TCPClient {
-    socket: tokio::net::UdpSocket,
+    socket: TokioTcpStream,
     common: args::CommonOpts,
     src_addr: IpAddr,
     dst_addr: IpAddr,
@@ -28,7 +33,7 @@ pub struct TCPClient {
 }
 
 impl TCPClient {
-    pub fn new(args: args::UDPOpts) -> Result<TCPClient> {
+    pub fn new(args: args::TCPOpts) -> Result<TCPClient> {
         let iface = args
             .common_opts
             .iface
@@ -39,8 +44,9 @@ impl TCPClient {
         let dst_addr = args.dst_addr;
         let dst_port = args.dst_port;
 
-        let socket = UDPSocket::new(Some(iface), None)?;
-        let socket = tokioUdpSocket::from_std(
+        let mut socket = TCPSocket::new(Some(iface), None)?;
+        socket.connect(SocketAddr::new(dst_addr, dst_port))?;
+        let socket = TokioTcpStream::from_std(
             socket.get_ref().try_clone()?.try_into()?,
         )?;
 
@@ -59,6 +65,8 @@ impl TCPClient {
             src_port: None,
             dst_port,
             logger,
+            // Safety we have a default value
+            cc: args.cc.unwrap(),
         })
     }
     pub async fn run(&mut self) -> Result<()> {
@@ -70,7 +78,7 @@ impl TCPClient {
         };
         let src_addr = match self.src_addr {
             IpAddr::V4(addr) => addr,
-            IpAddr::V6(addr) => {
+            IpAddr::V6(_) => {
                 return Err(anyhow!("IPv6 is not supported yet"));
             }
         };
@@ -103,45 +111,41 @@ impl TCPClient {
             recv_timestamp: 0,
             payload: vec![0u8; self.common.len.unwrap() as usize],
         };
+        // Convert to framed readers and writers as TCP is a streaming protocol
+        let (rx, tx) = self.socket.split();
+        let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
+        let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
 
         loop {
             tokio::select! {
-                _ = pacing_timer.tick() => {
-                    // Build UDP echo packet
+                _ = pacing_timer .tick() => {
                     payload.seq = self.internal_couter;
-                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-                    let echo_packet = bincode::serialize(&payload)?;
-                    self.socket.send_to(&echo_packet, (self.dst_addr, self.dst_port)).await?;
+                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u128;
+                    let encoded_packet = bincode::serialize(&payload)?;
+
+                    f_writer.send(encoded_packet.into()).await?;
                     self.internal_couter += 1;
-                },
-                Ok((len, recv_addr)) = self.socket.recv_from(&mut buf) => {
-                    // Deserialize the packet
-                    let recv_packet: TcpEchoPacket = bincode::deserialize(&buf[..len])?;
-
-                    // Puplate the result
-
-                    let recv_timestamp= SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-                    let rtt = ((recv_timestamp - recv_packet.send_timestamp) as f64)/1e6;
-                    let result = UDPEchoResult {
-                        recv_timestamp,
-
-                        seq: recv_packet.seq,
-                        send_timestamp: recv_packet.send_timestamp,
-                        server_timestamp: recv_packet.recv_timestamp,
-                        rtt: rtt,
-                        src_addr: self.src_addr.to_string(),
-                        dst_addr: self.dst_addr.to_string(),
-                    };
-
-               if self.logger.is_some() {
-                   // Safety: Safe to unwrap because the file is some
-                   self.logger.as_mut().unwrap().log(&result).await?;
-               }
-
-
-
                 }
-
+                Some(Ok(frame)) = f_reader.next() => {
+                    let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u128;
+                    let decoded_packet: TcpEchoPacket = bincode::deserialize(&frame)?;
+                    let send_timestamp = decoded_packet.send_timestamp;
+                    let seq = decoded_packet.seq;
+                    let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
+                    // println!("{} bytes from {}: icmp_seq={} ttl={} time={} ms", len, dst_addr, seq, 64, rtt);
+                    if let Some(logger) = &mut self.logger {
+                        logger.log(&TCPEchoResult {
+                            seq,
+                            rtt,
+                            send_timestamp,
+                            recv_timestamp,
+                            server_timestamp: decoded_packet.recv_timestamp,
+                            src_addr: src_addr.to_string(),
+                            dst_addr: dst_addr.to_string(),
+                            cc: self.cc.clone(),
+                        }).await?;
+                    }
+                }
             }
         }
     }
@@ -155,9 +159,8 @@ struct TcpEchoPacket {
     #[serde(with = "serde_bytes")]
     payload: Vec<u8>,
 }
-
 pub struct TCPServer {
-    socket: tokio::net::UdpSocket,
+    socket: TokioTcpListener,
     common: args::CommonOpts,
     dst_addr: IpAddr,
     internal_couter: u128,
@@ -170,8 +173,8 @@ impl TCPServer {
         let dst_addr = args.dst_addr;
         let dst_port = args.dst_port;
 
-        let socket = UDPSocket::new(None, Some((dst_addr, dst_port)))?;
-        let socket = tokioUdpSocket::from_std(
+        let socket = TCPSocket::new(None, Some((dst_addr, dst_port)))?;
+        let socket = TokioTcpListener::from_std(
             socket.get_ref().try_clone()?.try_into()?,
         )?;
 
@@ -186,17 +189,31 @@ impl TCPServer {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        let mut buf = [0u8; 1500];
-
         loop {
-            let (len, recv_addr) = self.socket.recv_from(&mut buf).await?;
-            let mut recv_packet: TcpEchoPacket =
-                bincode::deserialize(&buf[..len])?;
-            let recv_timestamp =
-                SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            recv_packet.recv_timestamp = recv_timestamp;
-            let echo_packet = bincode::serialize(&recv_packet)?;
-            self.socket.send_to(&echo_packet, recv_addr).await?;
+            if let Ok((mut stream, addr)) = self.socket.accept().await {
+                let (rx, tx) = stream.split(); // Owned such that we can move it into the select_all
+                tokio::spawn(async move {
+                    Self::client_handler(stream).await.unwrap_err();
+                })
+                .await?;
+            }
+        }
+    }
+
+    pub async fn client_handler(mut stream: TokioTcpStream) -> Result<()> {
+        let (rx, tx) = stream.split();
+        let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
+        let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        loop {
+            tokio::select! {
+            Some(Ok(frame)) = f_reader.next() => {
+                let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u128;
+                let mut decoded_packet: TcpEchoPacket = bincode::deserialize(&frame)?;
+                decoded_packet.recv_timestamp = recv_timestamp;
+                let encoded_packet = bincode::serialize(&decoded_packet)?;
+                f_writer.send(encoded_packet.into()).await?;
+                }
+            }
         }
     }
 }

@@ -16,3 +16,6 @@ common = { path = "../common" }
 anyhow = {}
 etherparse = "0.13.0"
 rand = "0.8.5"
+tokio-util = "*"
+futures = "*"
+futures-util = "*"

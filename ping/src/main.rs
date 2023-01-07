@@ -12,28 +12,31 @@ async fn main() -> Result<()> {
     match args.mode {
         args::Modes::Client { proto } => match proto {
             args::Protocol::Tcp(opts) => {
-                println!("TCP");
+                let mut client = tcp::TCPClient::new(opts)?;
+                client.run().await?;
             }
             args::Protocol::Udp(opts) => {
-                println!("UDP");
+                let mut client = udp::UDPClient::new(opts)?;
+                client.run().await?;
             }
             args::Protocol::Icmp(opts) => {
-                let client = icmp::ICMPClient::new(opts);
-                client?.run().await?;
+                let mut client = icmp::ICMPClient::new(opts)?;
+                client.run().await?;
             }
         },
         args::Modes::Server { proto } => match proto {
             args::Protocol::Tcp(opts) => {
-                println!("TCP");
+                let mut server = tcp::TCPServer::new(opts)?;
+                server.run().await?;
             }
             args::Protocol::Udp(opts) => {
-                println!("UDP");
+                let mut server = udp::UDPServer::new(opts)?;
+                server.run().await?;
             }
             args::Protocol::Icmp(opts) => {
-                println!("ICMP");
+                anyhow::bail!("ICMP server not implemented");
             }
         },
     };
     Ok(())
-    // match args.mode {}
 }

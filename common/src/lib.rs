@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use pnet_datalink;
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::io::unix::AsyncFd;
 
 // Strong types for the different protocols
@@ -212,7 +212,92 @@ impl UDPSocket {
     }
 }
 
-// Create new ICMP socket, default to IPv4
+// Create new TCP socket
+
+pub struct TCPSocket(Socket);
+
+impl TCPSocket {
+    pub fn new(
+        bind_interface: Option<&str>,
+        bind_address: Option<(IpAddr, u16)>,
+    ) -> Result<TCPSocket> {
+        // Check bind_addr is an IPv4 or IPv6 address
+        let socket = match bind_address {
+            Some(addr) => match addr.0 {
+                IpAddr::V4(_) => {
+                    let socket = Socket::new(
+                        Domain::IPV4,
+                        Type::STREAM,
+                        Some(Protocol::TCP),
+                    )?;
+                    socket.set_nonblocking(true)?;
+
+                    match bind_interface {
+                        Some(bi) => bind_to_device(socket, bi)?,
+                        None => socket,
+                    }
+                }
+
+                IpAddr::V6(_) => {
+                    let socket = Socket::new(
+                        Domain::IPV6,
+                        Type::STREAM,
+                        Some(Protocol::TCP),
+                    )?;
+                    socket.set_nonblocking(true)?;
+
+                    match bind_interface {
+                        Some(bi) => bind_to_device(socket, bi)?,
+                        None => socket,
+                    }
+                }
+            },
+            None => {
+                let socket = Socket::new(
+                    Domain::IPV4,
+                    Type::STREAM,
+                    Some(Protocol::TCP),
+                )?;
+                socket.set_nonblocking(true)?;
+
+                match bind_interface {
+                    Some(bi) => bind_to_device(socket, bi)?,
+                    None => socket,
+                }
+            }
+        };
+        match bind_address {
+            // Bind to the address and an ephemeral port
+            Some((addr, 0)) => {
+                let socket_address = SocketAddr::new(addr, 0);
+                socket.bind(&socket_address.into())?;
+            }
+            // Bind to provided port and address
+            Some((addr, port)) => {
+                let socket_address = SocketAddr::new(addr, port);
+                socket.bind(&socket_address.into())?;
+            }
+            // Otherwise request an ephemeral port
+            None => {}
+        }
+
+        Ok(TCPSocket(socket))
+    }
+    pub fn get_mut(&mut self) -> &mut Socket {
+        &mut self.0
+    }
+    pub fn get_ref(&self) -> &Socket {
+        &self.0
+    }
+    pub fn connect(&mut self, addr: SocketAddr) -> Result<()> {
+        self.0.connect(&addr.into())?;
+        Ok(())
+    }
+    pub fn listen(&mut self, backlog: i32) -> Result<()> {
+        self.0.listen(backlog)?;
+        Ok(())
+    }
+}
 
 pub fn new_tcp_socket(
     bind_interface: Option<String>,

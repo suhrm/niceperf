@@ -84,3 +84,31 @@ impl fmt::Display for UDPEchoResult {
         )
     }
 }
+
+pub struct TCPEchoResult {
+    pub seq: u128,
+    pub send_timestamp: u128,
+    pub server_timestamp: u128,
+    pub recv_timestamp: u128,
+    pub rtt: f64,
+    pub src_addr: String,
+    pub dst_addr: String,
+    pub cc: String,
+}
+
+impl fmt::Display for TCPEchoResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{},{},{},{},{},{},{},{}\n",
+            self.seq,
+            self.send_timestamp,
+            self.server_timestamp,
+            self.recv_timestamp,
+            self.rtt,
+            self.dst_addr,
+            self.src_addr,
+            self.cc
+        )
+    }
+}

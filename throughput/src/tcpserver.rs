@@ -1,13 +1,14 @@
-use crate::args::TcpServerOpts;
 use anyhow::{Error, Result};
 use bytes::BytesMut;
 use common::new_tcp_socket;
-use tokio::net::{TcpListener, TcpStream};
+use futures_util::{StreamExt, TryStreamExt};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    select,
+};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use crate::messages;
-use futures_util::{StreamExt, TryStreamExt};
-use tokio::select;
+use crate::{args::TcpServerOpts, messages};
 
 pub async fn run(options: TcpServerOpts) -> Result<()> {
     let socket = new_tcp_socket(
@@ -56,12 +57,17 @@ async fn handle_stream(mut stream: TcpStream) -> Result<()> {
     }
 }
 
-
 async fn handle_packet(packet: &BytesMut) -> Result<()> {
     match bincode::deserialize(packet)? {
-        messages::PacketType::SideChannel(_sch) => {todo!()},
+        messages::PacketType::SideChannel(_sch) => {
+            todo!()
+        }
         messages::PacketType::Throughput(tp) => {
-            println!("Got TP packet with conn_id: {} and length: {}", tp.connection_id, tp.payload.len());
+            println!(
+                "Got TP packet with conn_id: {} and length: {}",
+                tp.connection_id,
+                tp.payload.len()
+            );
             Ok(())
         }
     }
