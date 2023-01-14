@@ -171,6 +171,10 @@ impl ICMPClient {
                    // Safety: Safe to unwrap because the file is some
                    self.logger.as_mut().unwrap().log(&result).await?;
                }
+               else {
+                   // If no logger is specified, print the result in standard ping format
+                   println!("{} bytes from {}: icmp_seq={} ttl={} time={:.3} ms", result.size, result.src_addr, result.seq, result.ttl, result.rtt);
+                }
 
 
 
