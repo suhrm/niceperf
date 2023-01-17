@@ -68,9 +68,12 @@ mod test {
         assert!(output.status.success());
     }
     fn activate_venv() {
-        let mut cmd = std::process::Command::new("source");
-
-        cmd.arg("venv/bin/activate");
+        // Get the current working directory
+        let cwd = std::env::current_dir().unwrap();
+        let mut cmd = std::process::Command::new(format!(
+            "{}/venv/bin/activate.fish",
+            cwd.display()
+        ));
         let output = cmd.output().expect("Failed to activate venv");
         assert!(output.status.success());
     }
@@ -90,8 +93,8 @@ mod test {
             .arg("integration_test/test_icmp.py")
             .output()
             .unwrap();
-        assert!(o.status.success());
         delete_venv();
+        assert!(o.status.success());
     }
     #[test]
     fn tcp() {
@@ -100,8 +103,8 @@ mod test {
             .arg("integration_test/test_tcp.py")
             .output()
             .unwrap();
-        assert!(o.status.success());
         delete_venv();
+        assert!(o.status.success());
     }
     #[test]
     fn udp() {
@@ -110,7 +113,7 @@ mod test {
             .arg("integration_test/test_udp.py")
             .output()
             .unwrap();
-        assert!(o.status.success());
         delete_venv();
+        assert!(o.status.success());
     }
 }
