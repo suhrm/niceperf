@@ -5,7 +5,6 @@ mod logger;
 mod tcp;
 mod udp;
 use anyhow::Result;
-use ctor::ctor;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let args = args::Opts::parse();
@@ -66,31 +65,21 @@ mod test {
         assert!(output.status.success());
     }
     fn install_deps() {
-        let cwd = std::env::current_dir().unwrap();
-        let mut cmd = std::process::Command::new(format!(
-            "{}/venv/bin/pip",
-            cwd.display()
-        ));
-        cmd.arg("install").arg("-r").arg(format!(
-            "{}/integration_test/requirements.in",
-            cwd.display()
-        ));
+        let mut cmd = std::process::Command::new(format!("venv/bin/pip"));
+        cmd.arg("install")
+            .arg("-r")
+            .arg(format!("integration_test/requirements.in"));
         let output = cmd.output().expect("Failed to install deps");
         assert!(output.status.success());
-        // println!("{}", String::from_utf8(output.stdout).unwrap());
     }
 
     #[test]
     fn integration_test() {
         init_venv();
         let cwd = std::env::current_dir().unwrap();
-        let mut cmd = std::process::Command::new(format!(
-            "{}/venv/bin/python",
-            cwd.display()
-        ));
+        let mut cmd = std::process::Command::new(format!("venv/bin/python"));
         cmd.arg("-m").arg("pytest").arg("integration_test/");
         let output = cmd.output().expect("Failed to run test");
-        println!("{:?}", output);
         assert!(output.status.success());
         delete_venv();
     }
