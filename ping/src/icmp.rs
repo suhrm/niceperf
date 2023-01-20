@@ -105,6 +105,10 @@ impl ICMPClient {
         loop {
             tokio::select! {
                 _ = pacing_timer.tick() => {
+                    if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
+                        return Ok(());
+
+                    }
                     // Build ICMP packet
                     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
                     // Put timestamp in the payload

@@ -76,10 +76,10 @@ mod test {
     #[test]
     fn integration_test() {
         init_venv();
-        let cwd = std::env::current_dir().unwrap();
         let mut cmd = std::process::Command::new(format!("venv/bin/python"));
         cmd.arg("-m").arg("pytest").arg("integration_test/");
         let output = cmd.output().expect("Failed to run test");
+        println!("{:?}", output);
         assert!(output.status.success());
         delete_venv();
     }
