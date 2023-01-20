@@ -37,7 +37,7 @@ def test_icmp():
         server.up(interface="eth-server")
 
         res = client.run_async(
-            cmd="target/debug/ping client icmp -i eth-client --dst-addr 10.0.0.1 -c 2",
+            cmd="../target/debug/ping client icmp -i eth-client --dst-addr 10.0.0.1 -c 2",
         )
 
         while process_monitor.run():
