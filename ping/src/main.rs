@@ -47,10 +47,8 @@ async fn main() -> Result<()> {
 mod test {
     use super::*;
     // These functions are for initializing the python testing environment
-    #[ctor]
     fn init_venv() {
         create_venv();
-        activate_venv();
         install_deps();
     }
     fn delete_venv() {
@@ -67,53 +65,33 @@ mod test {
         let output = cmd.output().expect("Failed to create venv");
         assert!(output.status.success());
     }
-    fn activate_venv() {
-        // Get the current working directory
+    fn install_deps() {
         let cwd = std::env::current_dir().unwrap();
         let mut cmd = std::process::Command::new(format!(
-            "{}/venv/bin/activate.fish",
+            "{}/venv/bin/pip",
             cwd.display()
         ));
-        let output = cmd.output().expect("Failed to activate venv");
-        assert!(output.status.success());
-    }
-    fn install_deps() {
-        let mut cmd = std::process::Command::new("pip");
-        cmd.arg("install")
-            .arg("-r")
-            .arg("integration_test/requirements.txt");
+        cmd.arg("install").arg("-r").arg(format!(
+            "{}/integration_test/requirements.in",
+            cwd.display()
+        ));
         let output = cmd.output().expect("Failed to install deps");
         assert!(output.status.success());
+        // println!("{}", String::from_utf8(output.stdout).unwrap());
     }
 
     #[test]
-    fn icmp() {
+    fn integration_test() {
         init_venv();
-        let o = std::process::Command::new("pytest")
-            .arg("integration_test/test_icmp.py")
-            .output()
-            .unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        let mut cmd = std::process::Command::new(format!(
+            "{}/venv/bin/python",
+            cwd.display()
+        ));
+        cmd.arg("-m").arg("pytest").arg("integration_test/");
+        let output = cmd.output().expect("Failed to run test");
+        println!("{:?}", output);
+        assert!(output.status.success());
         delete_venv();
-        assert!(o.status.success());
-    }
-    #[test]
-    fn tcp() {
-        init_venv();
-        let o = std::process::Command::new("pytest")
-            .arg("integration_test/test_tcp.py")
-            .output()
-            .unwrap();
-        delete_venv();
-        assert!(o.status.success());
-    }
-    #[test]
-    fn udp() {
-        init_venv();
-        let o = std::process::Command::new("pytest")
-            .arg("integration_test/test_udp.py")
-            .output()
-            .unwrap();
-        delete_venv();
-        assert!(o.status.success());
     }
 }
