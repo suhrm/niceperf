@@ -380,3 +380,43 @@ pub fn interface_to_ipaddr(interface: &str) -> Result<IpAddr> {
 
     Ok(ipaddr.ip())
 }
+
+pub fn init_venv() {
+    create_venv();
+    install_deps();
+}
+pub fn delete_venv() {
+    std::process::Command::new("rm")
+        .arg("-rf")
+        .arg("venv")
+        .output()
+        .expect("Failed to delete venv");
+}
+
+fn create_venv() {
+    let mut cmd = std::process::Command::new("python3");
+    cmd.arg("-m").arg("venv").arg("venv");
+    let output = cmd.output().expect("Failed to create venv");
+    assert!(output.status.success());
+}
+fn install_deps() {
+    let mut cmd = std::process::Command::new(format!("venv/bin/pip"));
+    cmd.arg("install")
+        .arg("-r")
+        .arg(format!("integration_test/requirements.in"));
+    let output = cmd.output().expect("Failed to install deps");
+    assert!(output.status.success());
+}
+pub fn run_pytest() {
+    let mut cmd = std::process::Command::new(format!("venv/bin/python"));
+    cmd.arg("-m").arg("pytest").arg("integration_test/");
+    let output = cmd.output().expect("Failed to run test");
+    // For printing the output of the of the pytest tests
+    println!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(output.status.success());
+}
