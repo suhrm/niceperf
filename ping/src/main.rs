@@ -79,7 +79,12 @@ mod test {
         let mut cmd = std::process::Command::new(format!("venv/bin/python"));
         cmd.arg("-m").arg("pytest").arg("integration_test/");
         let output = cmd.output().expect("Failed to run test");
-        println!("{:?}", output);
+        // For printing the output of the of the pytest tests
+        println!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(output.status.success());
         delete_venv();
     }

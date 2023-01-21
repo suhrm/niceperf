@@ -4,16 +4,17 @@ import pytest
 
 
 log = logging.getLogger("test_icmp")
+log.setLevel(logging.INFO)
 log.info("starting test_icmp")
 
 
+# TODO: This still needs some work.
 @pytest.fixture(scope="session")
 def ping_binary(pytestconfig):
     return pytestconfig.getoption("--ping_binary")
 
 
 def test_icmp():
-    log.setLevel(logging.DEBUG)
     process_monitor = dummynet.ProcessMonitor(log=log)
     shell = dummynet.HostShell(log=log, sudo=True, process_monitor=process_monitor)
     net = dummynet.DummyNet(shell=shell)
