@@ -380,11 +380,27 @@ pub fn interface_to_ipaddr(interface: &str) -> Result<IpAddr> {
 
     Ok(ipaddr.ip())
 }
-
+/// Init python venv for integration tests using dummynet.
 pub fn init_venv() {
     create_venv();
     install_deps();
 }
+/// Run integration tests in integration_test directory relative to the current
+/// binary under test
+pub fn run_pytest() {
+    let mut cmd = std::process::Command::new(format!("venv/bin/python"));
+    cmd.arg("-m").arg("pytest").arg("integration_test/");
+    let output = cmd.output().expect("Failed to run test");
+    // For printing the output of the of the pytest tests
+    println!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(output.status.success());
+}
+/// delete the venv directory for integration tests
 pub fn delete_venv() {
     std::process::Command::new("rm")
         .arg("-rf")
@@ -393,6 +409,7 @@ pub fn delete_venv() {
         .expect("Failed to delete venv");
 }
 
+// Create a virtual environment
 fn create_venv() {
     let mut cmd = std::process::Command::new("python3");
     cmd.arg("-m").arg("venv").arg("venv");
@@ -405,18 +422,5 @@ fn install_deps() {
         .arg("-r")
         .arg(format!("integration_test/requirements.in"));
     let output = cmd.output().expect("Failed to install deps");
-    assert!(output.status.success());
-}
-pub fn run_pytest() {
-    let mut cmd = std::process::Command::new(format!("venv/bin/python"));
-    cmd.arg("-m").arg("pytest").arg("integration_test/");
-    let output = cmd.output().expect("Failed to run test");
-    // For printing the output of the of the pytest tests
-    println!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
     assert!(output.status.success());
 }
