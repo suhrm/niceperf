@@ -441,13 +441,40 @@ impl fmt::Display for Statistics {
             f,
             "mean: {:.2} variance: {:.2} standard deviation: {:.2} min: {:.2} \
              max: {:.2} samples: {}",
-            self.mean,
-            self.variance,
-            self.standard_deviation,
-            self.min,
-            self.max,
-            self.samples
+            self.mean(),
+            self.variance(),
+            self.standard_deviation(),
+            self.min(),
+            self.max(),
+            self.samples()
         )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn stats_test() {
+        let mut stats = Statistics::new();
+        stats.update(1.0);
+        stats.update(2.0);
+        stats.update(3.0);
+        stats.update(4.0);
+        stats.update(5.0);
+        stats.update(6.0);
+        stats.update(7.0);
+        stats.update(8.0);
+        stats.update(9.0);
+        stats.update(10.0);
+
+        assert_eq!(stats.mean(), 5.5);
+        assert_eq!(stats.variance(), 8.25);
+        assert_eq!(stats.standard_deviation().round(), 3.0);
+        assert_eq!(stats.min, 1.0);
+        assert_eq!(stats.max, 10.0);
+        assert_eq!(stats.samples, 10);
     }
 }
 
@@ -463,6 +490,27 @@ impl Statistics {
         }
     }
 
+    pub fn mean(&self) -> f64 {
+        self.mean
+    }
+    pub fn variance(&self) -> f64 {
+        self.variance / ((self.samples) as f64)
+    }
+    pub fn standard_deviation(&self) -> f64 {
+        self.variance().sqrt()
+    }
+
+    pub fn min(&self) -> f64 {
+        self.min
+    }
+
+    pub fn max(&self) -> f64 {
+        self.max
+    }
+    pub fn samples(&self) -> usize {
+        self.samples
+    }
+
     pub fn update(&mut self, value: f64) {
         self.samples += 1;
         if self.samples == 1 {
@@ -476,7 +524,6 @@ impl Statistics {
             self.mean = old_mean + (value - old_mean) / self.samples as f64;
             self.variance =
                 self.variance + (value - old_mean) * (value - self.mean);
-            self.standard_deviation = self.variance.sqrt();
             self.min = self.min.min(value);
             self.max = self.max.max(value);
         }
