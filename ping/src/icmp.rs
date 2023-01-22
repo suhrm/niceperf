@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use common::{interface_to_ipaddr, AsyncICMPSocket, ICMPSocket};
+use common::{interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Statistics};
 use etherparse::{
     ip_number, IcmpEchoHeader, Icmpv4Header, Icmpv4Type, Icmpv6Header,
     Icmpv6Type, IpHeader, Ipv4HeaderSlice, PacketBuilder, TransportHeader,
@@ -32,6 +32,8 @@ pub struct ICMPClient {
     internal_couter: u128,
     /// Identifier of ICMP packets (This is random by default)
     identifier: u16,
+    /// Rtt statistics
+    rtt_stats: Statistics,
 }
 
 impl ICMPClient {
@@ -60,6 +62,7 @@ impl ICMPClient {
             //Safety: Safe to unwrap because we have a default value
             identifier: rand::random::<u16>(),
             logger,
+            rtt_stats: Statistics::new(),
         })
     }
     pub async fn run(&mut self) -> Result<()> {
@@ -85,8 +88,9 @@ impl ICMPClient {
             self.common.len.unwrap()
         );
         println!(
-            "interval {:?} preload {:?}",
-            self.common.interval, self.common.preload
+            "interval {} ms, preload {} packets ",
+            self.common.interval.unwrap(),
+            self.common.preload.unwrap()
         );
         // TODO: Add support for timeout
         let timeout_tracker =
@@ -106,7 +110,7 @@ impl ICMPClient {
             tokio::select! {
                 _ = pacing_timer.tick() => {
                     if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
-                        return Ok(());
+                        break;
 
                     }
                     // Build ICMP packet
@@ -171,6 +175,7 @@ impl ICMPClient {
                    dst_addr: self.dst_addr.to_string(),
                    unique_seq: seq_internal,
                };
+               self.rtt_stats.update(rtt);
                if self.logger.is_some() {
                    // Safety: Safe to unwrap because the file is some
                    self.logger.as_mut().unwrap().log(&result).await?;
@@ -186,5 +191,8 @@ impl ICMPClient {
 
             }
         }
+        // Print the statistics
+        println!("{}", self.rtt_stats);
+        Ok(())
     }
 }

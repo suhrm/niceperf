@@ -38,12 +38,16 @@ def test_icmp():
         server.up(interface="eth-server")
 
         res = client.run_async(
-            cmd="../target/debug/ping client icmp -i eth-client --dst-addr 10.0.0.1 -c 2",
+            cmd="../target/debug/ping client icmp -i eth-client --dst-addr 10.0.0.2 -c 10 --interval 100",
         )
 
         while process_monitor.run():
             pass
+        
+        res.match(stdout="*seq=9*",stderr=None)
 
+
+        log.info(res.stdout)
         assert res.returncode == 0
 
     finally:

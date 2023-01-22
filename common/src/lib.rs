@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::{AsRawFd, RawFd},
 };
@@ -423,4 +424,61 @@ fn install_deps() {
         .arg(format!("integration_test/requirements.in"));
     let output = cmd.output().expect("Failed to install deps");
     assert!(output.status.success());
+}
+
+pub struct Statistics {
+    mean: f64,
+    variance: f64,
+    standard_deviation: f64,
+    min: f64,
+    max: f64,
+    samples: usize,
+}
+
+impl fmt::Display for Statistics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "mean: {:.2} variance: {:.2} standard deviation: {:.2} min: {:.2} \
+             max: {:.2} samples: {}",
+            self.mean,
+            self.variance,
+            self.standard_deviation,
+            self.min,
+            self.max,
+            self.samples
+        )
+    }
+}
+
+impl Statistics {
+    pub fn new() -> Self {
+        Self {
+            mean: f64::NAN,
+            variance: f64::NAN,
+            standard_deviation: f64::NAN,
+            min: f64::NAN,
+            max: f64::NAN,
+            samples: 0,
+        }
+    }
+
+    pub fn update(&mut self, value: f64) {
+        self.samples += 1;
+        if self.samples == 1 {
+            self.mean = value;
+            self.variance = 0.0;
+            self.standard_deviation = 0.0;
+            self.min = value;
+            self.max = value;
+        } else {
+            let old_mean = self.mean;
+            self.mean = old_mean + (value - old_mean) / self.samples as f64;
+            self.variance =
+                self.variance + (value - old_mean) * (value - self.mean);
+            self.standard_deviation = self.variance.sqrt();
+            self.min = self.min.min(value);
+            self.max = self.max.max(value);
+        }
+    }
 }
