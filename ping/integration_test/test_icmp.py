@@ -43,11 +43,9 @@ def test_icmp():
 
         while process_monitor.run():
             pass
-        
+
         log.info(res.stdout)
-        res.match(stdout="*seq=9*",stderr=None)
-
-
+        res.match(stdout="*seq=9*", stderr=None)
 
     finally:
         net.cleanup()

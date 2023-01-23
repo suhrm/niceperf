@@ -45,7 +45,9 @@ impl TCPClient {
         let dst_port = args.dst_port;
 
         let mut socket = TCPSocket::new(Some(iface), None)?;
+        println!("Trying to connect to {}...", dst_addr);
         socket.connect(SocketAddr::new(dst_addr, dst_port))?;
+        println!("Connected to {}", dst_addr);
         let socket = TokioTcpStream::from_std(
             socket.get_ref().try_clone()?.try_into()?,
         )?;
@@ -92,8 +94,9 @@ impl TCPClient {
             self.common.len.unwrap()
         );
         println!(
-            "interval {:?} preload {:?}",
-            self.common.interval, self.common.preload
+            "interval {} ms, preload {} packets ",
+            self.common.interval.unwrap(),
+            self.common.preload.unwrap()
         );
         // TODO: Add support for timeout
         let timeout_tracker =
@@ -119,35 +122,43 @@ impl TCPClient {
         loop {
             tokio::select! {
                 _ = pacing_timer .tick() => {
+                    if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
+                        break;
+
+                    }
                     payload.seq = self.internal_couter;
-                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u128;
+                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
                     let encoded_packet = bincode::serialize(&payload)?;
 
                     f_writer.send(encoded_packet.into()).await?;
                     self.internal_couter += 1;
                 }
                 Some(Ok(frame)) = f_reader.next() => {
-                    let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u128;
+                    let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
                     let decoded_packet: TcpEchoPacket = bincode::deserialize(&frame)?;
                     let send_timestamp = decoded_packet.send_timestamp;
                     let seq = decoded_packet.seq;
                     let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
-                    // println!("{} bytes from {}: icmp_seq={} ttl={} time={} ms", len, dst_addr, seq, 64, rtt);
+                    let result = TCPEchoResult {
+                        seq,
+                        rtt,
+                        send_timestamp,
+                        recv_timestamp,
+                        server_timestamp: decoded_packet.recv_timestamp,
+                        src_addr : src_addr.to_string(),
+                        dst_addr : dst_addr.to_string(),
+                        cc: self.cc.clone(),
+                    };
                     if let Some(logger) = &mut self.logger {
-                        logger.log(&TCPEchoResult {
-                            seq,
-                            rtt,
-                            send_timestamp,
-                            recv_timestamp,
-                            server_timestamp: decoded_packet.recv_timestamp,
-                            src_addr: src_addr.to_string(),
-                            dst_addr: dst_addr.to_string(),
-                            cc: self.cc.clone(),
-                        }).await?;
+                        logger.log(&result).await?;
+                    }
+                    else {
+                        println!("{} bytes from {}: tcp_pay_seq={} time={:.3} ms", frame.len(), result.src_addr, result.seq, result.rtt);
                     }
                 }
             }
         }
+        Ok(())
     }
 }
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -173,10 +184,12 @@ impl TCPServer {
         let dst_addr = args.dst_addr;
         let dst_port = args.dst_port;
 
-        let socket = TCPSocket::new(None, Some((dst_addr, dst_port)))?;
+        let mut socket = TCPSocket::new(None, Some((dst_addr, dst_port)))?;
+        socket.listen(128)?;
         let socket = TokioTcpListener::from_std(
             socket.get_ref().try_clone()?.try_into()?,
         )?;
+        println!("{:?}", socket);
 
         Ok(TCPServer {
             socket,
@@ -190,10 +203,13 @@ impl TCPServer {
 
     pub async fn run(&mut self) -> Result<()> {
         loop {
-            if let Ok((mut stream, addr)) = self.socket.accept().await {
-                let (rx, tx) = stream.split(); // Owned such that we can move it into the select_all
+            println!("Waiting for connection");
+            // let (socket, src_addr) = self.socket.accept().await?;
+            // println!("Got connection from {}", src_addr);
+            if let Ok((stream, addr)) = self.socket.accept().await {
+                println!("Got connection from {}", addr);
                 tokio::spawn(async move {
-                    Self::client_handler(stream).await.unwrap_err();
+                    Self::client_handler(stream).await.unwrap();
                 })
                 .await?;
             }
@@ -206,14 +222,21 @@ impl TCPServer {
         let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
         loop {
             tokio::select! {
-            Some(Ok(frame)) = f_reader.next() => {
-                let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u128;
+            next_frame = f_reader.next() => {
+                if let Some(Ok(frame)) = next_frame {
+                let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
                 let mut decoded_packet: TcpEchoPacket = bincode::deserialize(&frame)?;
                 decoded_packet.recv_timestamp = recv_timestamp;
                 let encoded_packet = bincode::serialize(&decoded_packet)?;
                 f_writer.send(encoded_packet.into()).await?;
+
+                }
+                else {
+                    break;
                 }
             }
+            }
         }
+        Ok(())
     }
 }

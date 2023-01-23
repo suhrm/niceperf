@@ -291,7 +291,10 @@ impl TCPSocket {
         &self.0
     }
     pub fn connect(&mut self, addr: SocketAddr) -> Result<()> {
+        self.0.set_nonblocking(false)?; // Set to blocking as we are waiting for a connection
+                                        // otherwise we get a WouldBlock error
         self.0.connect(&addr.into())?;
+        self.0.set_nonblocking(true)?;
         Ok(())
     }
     pub fn listen(&mut self, backlog: i32) -> Result<()> {
