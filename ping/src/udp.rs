@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use common::{interface_to_ipaddr, UDPSocket};
+use common::{interface_to_ipaddr, Statistics, UDPSocket};
 use serde::{Deserialize, Serialize};
 use tokio::net::UdpSocket as tokioUdpSocket;
 
@@ -24,6 +24,7 @@ pub struct UDPClient {
     src_port: Option<u16>,
     dst_port: u16,
     logger: Option<PingLogger>,
+    rtt_stats: Statistics,
 }
 
 impl UDPClient {
@@ -58,6 +59,7 @@ impl UDPClient {
             src_port: None,
             dst_port,
             logger,
+            rtt_stats: Statistics::new(),
         })
     }
     pub async fn run(&mut self) -> Result<()> {
@@ -83,8 +85,9 @@ impl UDPClient {
             self.common.len.unwrap()
         );
         println!(
-            "interval {:?} preload {:?}",
-            self.common.interval, self.common.preload
+            "interval {} ms, preload {} packets ",
+            self.common.interval.unwrap(),
+            self.common.preload.unwrap()
         );
         // TODO: Add support for timeout
         let timeout_tracker =
@@ -106,9 +109,13 @@ impl UDPClient {
         loop {
             tokio::select! {
                 _ = pacing_timer.tick() => {
+                    if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
+                        break;
+
+                    }
                     // Build UDP echo packet
                     payload.seq = self.internal_couter;
-                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
                     let echo_packet = bincode::serialize(&payload)?;
                     self.socket.send_to(&echo_packet, (self.dst_addr, self.dst_port)).await?;
                     self.internal_couter += 1;
@@ -119,7 +126,7 @@ impl UDPClient {
 
                     // Puplate the result
 
-                    let recv_timestamp= SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+                    let recv_timestamp= SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
                     let rtt = ((recv_timestamp - recv_packet.send_timestamp) as f64)/1e6;
                     let result = UDPEchoResult {
                         recv_timestamp,
@@ -131,10 +138,15 @@ impl UDPClient {
                         src_addr: self.src_addr.to_string(),
                         dst_addr: self.dst_addr.to_string(),
                     };
+                    self.rtt_stats.update(rtt);
 
                if self.logger.is_some() {
                    // Safety: Safe to unwrap because the file is some
                    self.logger.as_mut().unwrap().log(&result).await?;
+               }
+               else{
+                 // Print regular ping output
+                        println!("{} bytes from {}: udp_pay_seq={} time={:.3} ms", len, result.src_addr, result.seq, result.rtt);
                }
 
 
@@ -143,6 +155,8 @@ impl UDPClient {
 
             }
         }
+        println!("{}", self.rtt_stats);
+        Ok(())
     }
 }
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -192,7 +206,7 @@ impl UDPServer {
             let mut recv_packet: UdpEchoPacket =
                 bincode::deserialize(&buf[..len])?;
             let recv_timestamp =
-                SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
             recv_packet.recv_timestamp = recv_timestamp;
             let echo_packet = bincode::serialize(&recv_packet)?;
             self.socket.send_to(&echo_packet, recv_addr).await?;

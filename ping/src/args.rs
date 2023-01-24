@@ -96,10 +96,10 @@ pub struct UDPOpts {
     #[arg(long, short)]
     pub src_port: Option<u16>, */
     /// Set the destination port
-    #[arg(long, short)]
+    #[arg(long)]
     pub dst_port: u16,
     /// Set the destination address
-    #[arg(long, short)]
+    #[arg(long)]
     pub dst_addr: IpAddr,
 }
 #[derive(Args, Clone, Debug)]

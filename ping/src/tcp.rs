@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use common::{interface_to_ipaddr, TCPSocket};
+use common::{interface_to_ipaddr, Statistics, TCPSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -30,6 +30,7 @@ pub struct TCPClient {
     dst_port: u16,
     logger: Option<PingLogger>,
     cc: String,
+    rtt_stats: Statistics,
 }
 
 impl TCPClient {
@@ -69,6 +70,7 @@ impl TCPClient {
             logger,
             // Safety we have a default value
             cc: args.cc.unwrap(),
+            rtt_stats: Statistics::new(),
         })
     }
     pub async fn run(&mut self) -> Result<()> {
@@ -149,6 +151,7 @@ impl TCPClient {
                         dst_addr : dst_addr.to_string(),
                         cc: self.cc.clone(),
                     };
+                    self.rtt_stats.update(rtt);
                     if let Some(logger) = &mut self.logger {
                         logger.log(&result).await?;
                     }
@@ -158,6 +161,7 @@ impl TCPClient {
                 }
             }
         }
+        println!("{}", self.rtt_stats);
         Ok(())
     }
 }
