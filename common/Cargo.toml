@@ -12,3 +12,4 @@ libc = "0.2.139"
 pnet_datalink = "0.31.0"
 tokio = {version = "*", features=["full"]}
 nix = "0.26.2"
+quinn = "0.9.3"

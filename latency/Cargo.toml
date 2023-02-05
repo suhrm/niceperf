@@ -6,3 +6,18 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+tokio = {version = "*", features=["full"]}
+socket2 = {version="*", features=["all"]}
+serde_bytes = "*"
+serde = {version = "*", features = ["derive"]}
+bincode = "*"
+clap = { version = "4", features = ["derive"] }
+common = { path = "../common" }
+anyhow = {}
+etherparse = "0.13.0"
+rand = "0.8.5"
+tokio-util = "*"
+futures = "*"
+futures-util = "*"
+ctor = {}
+libc = "*"

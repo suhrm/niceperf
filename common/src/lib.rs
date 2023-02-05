@@ -556,3 +556,26 @@ impl Statistics {
         }
     }
 }
+
+struct QuicClient {
+    client: quinn::Endpoint, // quinn client
+    socket: UDPSocket,       // Underlying socket for the quic connection
+}
+
+struct QuicServer {
+    server: quinn::Endpoint,
+    socket: UDPSocket, // Underlying socket for the quic connection
+}
+
+impl QuicClient {
+    pub fn new(addr: (IpAddr, u16)) -> Result<Self> {
+        let socket = UDPSocket::new(None, None)?; // We do not bind to a
+                                                  // specific address nor
+                                                  // device for the client
+                                                  // unless this is the the
+                                                  // control channel socket
+                                                  // TODO: make this an
+
+        Err(anyhow!("Not implemented yet")) // option
+    }
+}
