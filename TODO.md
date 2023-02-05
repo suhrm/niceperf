@@ -1,32 +1,32 @@
 # TODOs
 ## Latency
 * icmp ping (similar to ping)
-  - [ ] For ICMP we need both ip seqnr and an internal counter which does not wrap in the lifetime of the measurement
-  - [ ] freqency of the measurement should be configurable
-  - [ ] payload size should be configurable as well configuration that includes underlaying protocol headers (ipv4, ipv6)
-  - [ ] output must include timestamp
-  - [ ] ability to bind to a specific interface
+  - [x] For ICMP we need both ip seqnr and an internal counter which does not wrap in the lifetime of the measurement
+  - [x] freqency of the measurement should be configurable
+  - [x] payload size should be configurable as well configuration that includes underlaying protocol headers (ipv4, ipv6)
+  - [x] output must include timestamp
+  - [x] ability to bind to a specific interface
   - [ ] amount of infligt pings should be configurable
   - [ ] IPv6 support
-  - [ ] max count of pings should be configurable
+  - [x] max count of pings should be configurable
   - [ ] timeout of pings should be configurable
 * udp echo
-  - [ ] Need own seqnr in packet
-  - [ ] freqency of the measurement should be configurable
-  - [ ] payload size should be configurable as well configuration that includes underlaying protocol headers (ipv4, ipv6)
-  - [ ] output must include timestamp
-  - [ ] ability to bind to a specific interface
+  - [x] Need own seqnr in packet
+  - [x] freqency of the measurement should be configurable
+  - [x] payload size should be configurable as well configuration that includes underlaying protocol headers (ipv4, ipv6)
+  - [x] output must include timestamp
+  - [x] ability to bind to a specific interface
   - [ ] amount of infligt pings should be configurable
   - [ ] IPv6 support
-  - [ ] max count of pings should be configurable
+  - [x] max count of pings should be configurable
   - [ ] timeout of pings should be configurable
   - [ ] ACK frequency should be configurable.
 * tcp echo (for congestion control etc...)
-  - [ ] Need own seqnr in packet
-  - [ ] Configurable congestion control algorithm
-  - [ ] MSS should be configurable
-  - [ ] Payload size should be configurable
-  - [ ] freqency of the measurement should be configurable
+  - [x] Need own seqnr in packet
+  - [x] Configurable congestion control algorithm
+  - [x] MSS should be configurable
+  - [x] Payload size should be configurable
+  - [x] freqency of the measurement should be configurable
   - [ ]  TCP_NODELAY should always be sess
 * OWD (one way delay)
   - [ ] TBD potenially take a look at Media over quic RFC.

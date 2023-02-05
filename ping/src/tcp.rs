@@ -45,7 +45,8 @@ impl TCPClient {
         let dst_addr = args.dst_addr;
         let dst_port = args.dst_port;
 
-        let mut socket = TCPSocket::new(Some(iface), None)?;
+        let mut socket =
+            TCPSocket::new(Some(iface), None, args.mss, args.cc.clone())?;
         println!("Trying to connect to {}...", dst_addr);
         socket.connect(SocketAddr::new(dst_addr, dst_port))?;
         println!("Connected to {}", dst_addr);
@@ -188,7 +189,12 @@ impl TCPServer {
         let dst_addr = args.dst_addr;
         let dst_port = args.dst_port;
 
-        let mut socket = TCPSocket::new(None, Some((dst_addr, dst_port)))?;
+        let mut socket = TCPSocket::new(
+            None,
+            Some((dst_addr, dst_port)),
+            args.mss,
+            args.cc,
+        )?;
         socket.listen(128)?;
         let socket = TokioTcpListener::from_std(
             socket.get_ref().try_clone()?.try_into()?,

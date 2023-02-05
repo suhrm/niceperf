@@ -1,10 +1,12 @@
 use std::{
+    ffi::{OsStr, OsString},
     fmt,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::{AsRawFd, RawFd},
 };
 
 use anyhow::{anyhow, Result};
+use nix::sys::socket::{getsockopt, setsockopt};
 use pnet_datalink;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::io::unix::AsyncFd;
@@ -221,6 +223,8 @@ impl TCPSocket {
     pub fn new(
         bind_interface: Option<&str>,
         bind_address: Option<(IpAddr, u16)>,
+        maximum_segment_size: Option<u16>,
+        congestion_control: Option<String>,
     ) -> Result<TCPSocket> {
         // Check bind_addr is an IPv4 or IPv6 address
         let socket = match bind_address {
@@ -280,6 +284,26 @@ impl TCPSocket {
             }
             // Otherwise request an ephemeral port
             None => {}
+        }
+
+        // Set the maximum segment size
+        match maximum_segment_size {
+            Some(mss) => {
+                socket.set_mss(mss.into())?;
+            }
+            None => {}
+        }
+        // Set TCP_NODELAY
+        socket.set_nodelay(true)?;
+
+        // Set the congestion control algorithm if provided
+        // otherwise use the default OS algorithm
+        if let Some(cc) = congestion_control {
+            nix::sys::socket::setsockopt(
+                socket.as_raw_fd(),
+                nix::sys::socket::sockopt::TcpCongestion,
+                &OsString::from(cc),
+            )?;
         }
 
         Ok(TCPSocket(socket))
