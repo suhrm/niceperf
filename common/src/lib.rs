@@ -1,4 +1,5 @@
 use std::{
+    sync::Arc,
     ffi::{OsStr, OsString},
     fmt,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -6,9 +7,8 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use nix::sys::socket::{getsockopt, setsockopt};
 use pnet_datalink;
-use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::unix::AsyncFd;
 
 // Strong types for the different protocols
@@ -116,7 +116,7 @@ impl AsyncICMPSocket {
             .try_io(|inner| inner.get_ref().get_ref().send_to(packet, &addr))
         {
             Ok(res) => Ok(res?),
-            Err(e) => Err(anyhow!("Error sending packet")),
+            Err(_e) => Err(anyhow!("Error sending packet")),
         }
     }
 
@@ -303,7 +303,15 @@ impl TCPSocket {
                 socket.as_raw_fd(),
                 nix::sys::socket::sockopt::TcpCongestion,
                 &OsString::from(cc),
-            )?;
+            )
+            .map_err(|e| {
+                anyhow!(
+                    "Failed to set congestion control algorithm: {}",
+                    e.to_string()
+                )
+                // TODO: get available congestion control algorithms from the OS
+                // and print them
+            })?;
         }
 
         Ok(TCPSocket(socket))
@@ -570,12 +578,16 @@ struct QuicServer {
 impl QuicClient {
     pub fn new(addr: (IpAddr, u16)) -> Result<Self> {
         let socket = UDPSocket::new(None, None)?; // We do not bind to a
-                                                  // specific address nor
-                                                  // device for the client
-                                                  // unless this is the the
-                                                  // control channel socket
-                                                  // TODO: make this an
+        // Create a quinn client to a specific address
+        let std_sock = std::net::UdpSocket::from(
+            socket.get_ref().try_clone()?.try_clone()?,
+        );
+        // TODO: This is a bit hacky, but it works for now.
+        let client = quinn::Endpoint::client(addr.into())?;
+        client.rebind(std_sock)?;
+        
 
-        Err(anyhow!("Not implemented yet")) // option
+
+        Ok(Self { client, socket })
     }
 }
