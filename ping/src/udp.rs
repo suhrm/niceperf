@@ -69,9 +69,9 @@ impl UDPClient {
                 return Err(anyhow!("IPv6 is not supported yet"));
             }
         };
-        let src_addr = match self.src_addr {
+        let _src_addr = match self.src_addr {
             IpAddr::V4(addr) => addr,
-            IpAddr::V6(addr) => {
+            IpAddr::V6(_addr) => {
                 return Err(anyhow!("IPv6 is not supported yet"));
             }
         };
@@ -90,7 +90,7 @@ impl UDPClient {
             self.common.preload.unwrap()
         );
         // TODO: Add support for timeout
-        let timeout_tracker =
+        let _timeout_tracker =
             tokio::time::interval(std::time::Duration::from_millis(10 * 1000));
         let mut pacing_timer = tokio::time::interval(
             std::time::Duration::from_millis(self.common.interval.unwrap()),
@@ -120,7 +120,7 @@ impl UDPClient {
                     self.socket.send_to(&echo_packet, (self.dst_addr, self.dst_port)).await?;
                     self.internal_couter += 1;
                 },
-                Ok((len, recv_addr)) = self.socket.recv_from(&mut buf) => {
+                Ok((len, _recv_addr)) = self.socket.recv_from(&mut buf) => {
                     // Deserialize the packet
                     let recv_packet: UdpEchoPacket = bincode::deserialize(&buf[..len])?;
 

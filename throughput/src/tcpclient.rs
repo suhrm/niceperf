@@ -1,12 +1,12 @@
 use std::net::SocketAddr;
-use anyhow::{Result, Error};
+use anyhow::{Result};
 use tokio::net::TcpStream;
 use common::new_tcp_socket;
 use crate::args::TcpClientOpts;
 use crate::messages::{PacketType, Throughput};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use futures::sink::SinkExt;
-use crate::messages;
+
 
 pub async fn run(options: TcpClientOpts) -> Result<()> {
     let socket = new_tcp_socket(

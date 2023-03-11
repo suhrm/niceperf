@@ -1,13 +1,14 @@
 use std::{
-    sync::Arc,
     ffi::{OsStr, OsString},
     fmt,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::{AsRawFd, RawFd},
+    sync::Arc,
 };
 
 use anyhow::{anyhow, Result};
 use pnet_datalink;
+use quinn::{VarInt, ServerConfig};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::unix::AsyncFd;
 
@@ -578,16 +579,66 @@ struct QuicServer {
 impl QuicClient {
     pub fn new(addr: (IpAddr, u16)) -> Result<Self> {
         let socket = UDPSocket::new(None, None)?; // We do not bind to a
-        // Create a quinn client to a specific address
+                                                  // Create a quinn client to a specific address
         let std_sock = std::net::UdpSocket::from(
             socket.get_ref().try_clone()?.try_clone()?,
         );
         // TODO: This is a bit hacky, but it works for now.
         let client = quinn::Endpoint::client(addr.into())?;
         client.rebind(std_sock)?;
-        
-
 
         Ok(Self { client, socket })
     }
+}
+
+impl QuicServer {
+    pub fn new(addr: (IpAddr, u16)) -> Result<Self> {
+        let socket = UDPSocket::new(None, None)?; // We do not bind to a
+                                                  // Create a quinn client to a specific address
+        let std_sock = std::net::UdpSocket::from(
+            socket.get_ref().try_clone()?.try_clone()?,
+        );
+
+        let (server_config, _server_cert) = configure_server()?;
+
+        let server = quinn::Endpoint::server(server_config, addr.into())?;
+
+        Ok(Self { server, socket })
+    }
+}
+#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
+fn configure_server() -> Result<(ServerConfig, Vec<u8>)> {
+    let (cert, key) = match std::fs::read("./cert.der")
+        .and_then(|x| Ok((x, std::fs::read("./key.der")?)))
+    {
+        Ok(x) => x,
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let cert =
+                rcgen::generate_simple_self_signed(vec!["localhost".into()])
+                    .unwrap();
+            let key = cert.serialize_private_key_der();
+            let cert = cert.serialize_der().unwrap();
+            std::fs::write("./cert.der", &cert)
+                .expect("Failed to write cert to ./cert.der");
+            std::fs::write("./key.der", &key)
+                .expect("Failed to write key to ./key.der");
+            (cert, key)
+        }
+        Err(_) => panic!("Error reading or generating certificates"),
+    };
+    let key = rustls::PrivateKey(key);
+    let cert_chain = vec![rustls::Certificate(cert.clone())];
+
+    let mut server_config = ServerConfig::with_single_cert(cert_chain, key)?;
+    Arc::get_mut(&mut server_config.transport)
+        .unwrap()
+        .max_concurrent_uni_streams(VarInt::from_u32(32))
+        .max_concurrent_bidi_streams(VarInt::from_u32(32))
+        .congestion_controller_factory(Arc::new(
+            quinn::congestion::BbrConfig::default(),
+        ))
+        .datagram_receive_buffer_size(Some(65535))
+        .max_idle_timeout(None);
+
+    Ok((server_config, cert))
 }

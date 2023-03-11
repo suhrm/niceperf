@@ -9,7 +9,6 @@ use common::{interface_to_ipaddr, Statistics, TCPSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream},
 };
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
@@ -88,7 +87,7 @@ impl TCPClient {
             }
         };
 
-        let mut buf = [0u8; 1500];
+        let _buf = [0u8; 1500];
 
         // Safety: Safe to unwrap because we have a default value
         println!(
@@ -102,7 +101,7 @@ impl TCPClient {
             self.common.preload.unwrap()
         );
         // TODO: Add support for timeout
-        let timeout_tracker =
+        let _timeout_tracker =
             tokio::time::interval(std::time::Duration::from_millis(10 * 1000));
         let mut pacing_timer = tokio::time::interval(
             std::time::Duration::from_millis(self.common.interval.unwrap()),
