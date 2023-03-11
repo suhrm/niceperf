@@ -1,4 +1,5 @@
 use std::{
+    fs,
     ffi::{OsStr, OsString},
     fmt,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -8,7 +9,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use pnet_datalink;
-use quinn::{VarInt, ServerConfig};
+use quinn::{ServerConfig, VarInt, ClientConfig};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::unix::AsyncFd;
 
@@ -605,6 +606,67 @@ impl QuicServer {
 
         Ok(Self { server, socket })
     }
+}
+/// Dummy certificate verifier that treats any certificate as valid.
+/// NOTE, such verification is vulnerable to MITM attacks, but convenient for
+/// testing.
+struct SkipServerVerification;
+
+impl SkipServerVerification {
+    fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
+}
+
+impl rustls::client::ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
+    }
+}
+fn configure_client() -> ClientConfig {
+    let mut roots = rustls::RootCertStore::empty();
+    // TODO: take this a an argument?
+    match fs::read("./cert.der") {
+        Ok(cert) => roots
+            .add(&rustls::Certificate(cert))
+            .expect("Unable to add cert"),
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+            panic!("Unable to find server certificate")
+        }
+        Err(e) => panic!("Unable to open cert"),
+    }
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_custom_certificate_verifier(SkipServerVerification::new())
+        .with_no_client_auth();
+    // Configure SSLKEYLOGFILE for rustls
+    crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+
+    let mut client_cfg = ClientConfig::new(Arc::new(crypto));
+    let mut transport_cfg = quinn::TransportConfig::default();
+    transport_cfg
+        .max_concurrent_uni_streams(VarInt::from_u32(32))
+        .max_concurrent_bidi_streams(VarInt::from_u32(32))
+        .datagram_receive_buffer_size(Some(65535))
+        .congestion_controller_factory(Arc::new(
+            quinn::congestion::BbrConfig::default(),
+        ))
+        .send_window(32500)
+        .max_idle_timeout(None);
+    client_cfg.transport_config(Arc::new(transport_cfg));
+
+
+
+    println!("Client{:?}", client_cfg);
+    client_cfg
 }
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 fn configure_server() -> Result<(ServerConfig, Vec<u8>)> {
