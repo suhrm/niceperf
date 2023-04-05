@@ -1,7 +1,6 @@
 use std::{
-    fs,
     ffi::{OsStr, OsString},
-    fmt,
+    fmt, fs,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::{AsRawFd, RawFd},
     sync::Arc,
@@ -9,7 +8,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use pnet_datalink;
-use quinn::{ServerConfig, VarInt, ClientConfig};
+use quinn::{ClientConfig, ServerConfig, VarInt};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::unix::AsyncFd;
 
@@ -97,7 +96,7 @@ impl AsyncICMPSocket {
         &mut self,
         packet: &[u8],
         addr: &IpAddr,
-    ) -> Result<(usize)> {
+    ) -> Result<usize> {
         let mut guard = self.inner.writable().await?;
         let addr = match addr {
             IpAddr::V4(addr) => {
@@ -567,28 +566,48 @@ impl Statistics {
     }
 }
 
-struct QuicClient {
+pub struct QuicClient {
     client: quinn::Endpoint, // quinn client
     socket: UDPSocket,       // Underlying socket for the quic connection
 }
 
-struct QuicServer {
+pub struct QuicServer {
     server: quinn::Endpoint,
     socket: UDPSocket, // Underlying socket for the quic connection
 }
 
 impl QuicClient {
-    pub fn new(addr: (IpAddr, u16)) -> Result<Self> {
+    pub fn new(
+        bind_interface: Option<&str>, // Interface to bind to
+        bind_address: Option<(IpAddr, u16)>, // Address to bind to
+        cert_path: &str,              // Path to the certificate
+    ) -> Result<Self> {
         let socket = UDPSocket::new(None, None)?; // We do not bind to a
                                                   // Create a quinn client to a specific address
         let std_sock = std::net::UdpSocket::from(
             socket.get_ref().try_clone()?.try_clone()?,
         );
         // TODO: This is a bit hacky, but it works for now.
-        let client = quinn::Endpoint::client(addr.into())?;
-        client.rebind(std_sock)?;
 
+        let client_config = configure_client(cert_path)?;
+        let client = match bind_address {
+            Some(addr) => quinn::Endpoint::client(addr.into())?,
+            None => quinn::Endpoint::client(
+                ("0.0.0.0".parse::<IpAddr>()?, 0).into(),
+            )?,
+        };
+
+        client.rebind(std_sock)?;
         Ok(Self { client, socket })
+    }
+    pub async fn connect(
+        &self,
+        server_addr: SocketAddrV4,
+    ) -> Result<quinn::Connection> {
+        self.client
+            .connect(server_addr.into(), "localhost")?
+            .await
+            .map_err(|e| e.into())
     }
 }
 
@@ -631,23 +650,16 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
         Ok(rustls::client::ServerCertVerified::assertion())
     }
 }
-fn configure_client() -> ClientConfig {
+fn configure_client(cert_path: &str) -> Result<ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     // TODO: take this a an argument?
-    match fs::read("./cert.der") {
-        Ok(cert) => roots
-            .add(&rustls::Certificate(cert))
-            .expect("Unable to add cert"),
-        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
-            panic!("Unable to find server certificate")
-        }
-        Err(e) => panic!("Unable to open cert"),
-    }
+    fs::read(cert_path)?;
+
     let mut crypto = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_no_client_auth();
-    // Configure SSLKEYLOGFILE for rustls
+    // Configure SSLKEYLOGFILE for rustls and debugin via Wireshark
     crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
     let mut client_cfg = ClientConfig::new(Arc::new(crypto));
@@ -663,10 +675,7 @@ fn configure_client() -> ClientConfig {
         .max_idle_timeout(None);
     client_cfg.transport_config(Arc::new(transport_cfg));
 
-
-
-    println!("Client{:?}", client_cfg);
-    client_cfg
+    Ok(client_cfg)
 }
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 fn configure_server() -> Result<(ServerConfig, Vec<u8>)> {

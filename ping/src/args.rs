@@ -13,14 +13,14 @@ pub struct Opts {
 
 #[derive(Subcommand, Debug)]
 pub enum Modes {
-    /// Set Niceperf throughput to run in server mode
+    /// Set Niceperf ping to run in server mode
     #[command(arg_required_else_help = true)]
     Server {
         #[command(subcommand)]
         proto: Protocol,
     },
 
-    /// Set Niceperf throughput to run in client mode
+    /// Set Niceperf ping to run in client mode
     #[command(arg_required_else_help = true)]
     Client {
         #[command(subcommand)]
