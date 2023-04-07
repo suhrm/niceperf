@@ -590,6 +590,8 @@ impl QuicClient {
         // TODO: This is a bit hacky, but it works for now.
 
         let client_config = configure_client(cert_path)?;
+        // Is this really needed since we rebind the socket later? maybe for the
+        // control channel?
         let client = match bind_address {
             Some(addr) => quinn::Endpoint::client(addr.into())?,
             None => quinn::Endpoint::client(
@@ -602,7 +604,7 @@ impl QuicClient {
     }
     pub async fn connect(
         &self,
-        server_addr: SocketAddrV4,
+        server_addr: (IpAddr, u16),
     ) -> Result<quinn::Connection> {
         self.client
             .connect(server_addr.into(), "localhost")?

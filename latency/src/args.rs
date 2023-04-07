@@ -18,6 +18,12 @@ pub enum Modes {
     Server {
         #[command(subcommand)]
         proto: Protocol,
+        /// Set the listen address for the control channel
+        #[arg(long, default_value = "0.0.0.0")]
+        listen_addr: IpAddr,
+        /// Set the listen port for the control channel
+        #[arg(long, default_value = "4443")]
+        listen_port: u16,
     },
 
     /// Set Niceperf throughput to run in client mode
@@ -25,6 +31,12 @@ pub enum Modes {
     Client {
         #[command(subcommand)]
         proto: Protocol,
+        #[arg(long)]
+        /// Set the destination address for the control channel
+        dst_addr: IpAddr,
+        /// Set the destination port for the control channel
+        #[arg(long, default_value = "4443")]
+        dst_port: u16,
     },
 }
 
@@ -37,8 +49,8 @@ pub enum Protocol {
     /// Set Niceperf ping to run in UDP mode
     Udp(UDPOpts),
     #[command(arg_required_else_help = true)]
-    /// Set Niceperf ping to run in ICMP mode
-    Icmp(ICMPOpts),
+    /// Set Niceperf ping to run in QUIC mode
+    Quic(QuicOpts),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -102,10 +114,14 @@ pub struct UDPOpts {
     #[arg(long)]
     pub dst_addr: IpAddr,
 }
+
 #[derive(Args, Clone, Debug)]
-pub struct ICMPOpts {
+pub struct QuicOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
+    /// Set the destination port
+    #[arg(long)]
+    pub dst_port: u16,
     /// Set the destination address
     #[arg(long)]
     pub dst_addr: IpAddr,
