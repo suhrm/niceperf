@@ -567,20 +567,20 @@ impl Statistics {
 }
 
 pub struct QuicClient {
-    client: quinn::Endpoint, // quinn client
-    socket: UDPSocket,       // Underlying socket for the quic connection
+    pub client: quinn::Endpoint, // quinn client
+    pub socket: UDPSocket,       // Underlying socket for the quic connection
 }
 
 pub struct QuicServer {
-    server: quinn::Endpoint,
-    socket: UDPSocket, // Underlying socket for the quic connection
+    pub server: quinn::Endpoint,
+    pub socket: UDPSocket, // Underlying socket for the quic connection
 }
 
 impl QuicClient {
     pub fn new(
         bind_interface: Option<&str>, // Interface to bind to
         bind_address: Option<(IpAddr, u16)>, // Address to bind to
-        cert_path: &str,              // Path to the certificate
+        cert_path: Option<&str>,      // Path to the certificate
     ) -> Result<Self> {
         let socket = UDPSocket::new(None, None)?; // We do not bind to a
                                                   // Create a quinn client to a specific address
@@ -592,12 +592,14 @@ impl QuicClient {
         let client_config = configure_client(cert_path)?;
         // Is this really needed since we rebind the socket later? maybe for the
         // control channel?
-        let client = match bind_address {
+        let mut client = match bind_address {
             Some(addr) => quinn::Endpoint::client(addr.into())?,
             None => quinn::Endpoint::client(
                 ("0.0.0.0".parse::<IpAddr>()?, 0).into(),
             )?,
         };
+
+        client.set_default_client_config(client_config);
 
         client.rebind(std_sock)?;
         Ok(Self { client, socket })
@@ -652,9 +654,14 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
         Ok(rustls::client::ServerCertVerified::assertion())
     }
 }
-fn configure_client(cert_path: &str) -> Result<ClientConfig> {
+fn configure_client(cert_path: Option<&str>) -> Result<ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     // TODO: take this a an argument?
+
+    let cert_path = cert_path.unwrap_or("cert.der");
+    let cert_path = std::env::current_dir()?.join(cert_path);
+    dbg!(&cert_path);
+
     fs::read(cert_path)?;
 
     let mut crypto = rustls::ClientConfig::builder()
@@ -714,4 +721,55 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>)> {
         .max_idle_timeout(None);
 
     Ok((server_config, cert))
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_connection() -> Result<()> {
+        let mut futures = Vec::new();
+        let server = QuicServer::new(("127.0.0.1".parse()?, 0))?;
+        let server_addr = server.server.local_addr()?.clone();
+
+        futures.push(tokio::spawn(async move {
+            let incomming = server.server.accept();
+
+            let connection = incomming
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Failed to accept"))?;
+
+            let connection = connection.await?;
+            dbg!("Accepted connection");
+            let bi_stream = connection.accept_bi().await?;
+            let (mut _send, mut recv) = bi_stream;
+            let mut buf = [0u8; 10];
+            recv.read(&mut buf).await?;
+            assert_eq!(buf, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+            let dgram = connection.read_datagram().await?;
+            assert_eq!(dgram, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+            dbg!("Received data");
+            Ok::<(), anyhow::Error>(())
+        }));
+
+        dbg!("Server started");
+
+        let client = QuicClient::new(None, None, None)?;
+
+        let con = client
+            .connect((server_addr.ip(), server_addr.port()))
+            .await?;
+        con.send_datagram(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].into())?;
+        let (mut send, mut _recv) = con.open_bi().await?;
+        let snd_len = send.write(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]).await?;
+        assert_eq!(snd_len, 10);
+
+        for fut in futures {
+            fut.await??;
+        }
+
+        Ok(())
+    }
 }
