@@ -1,3 +1,5 @@
 /target
 ping/integration_test/__pycache__
 ping/venv
+latency/cert.der
+latency/key.der
