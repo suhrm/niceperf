@@ -656,7 +656,6 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
 }
 fn configure_client(cert_path: Option<&str>) -> Result<ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
-    // TODO: take this a an argument?
 
     let cert_path = cert_path.unwrap_or("cert.der");
     let cert_path = std::env::current_dir()?.join(cert_path);
