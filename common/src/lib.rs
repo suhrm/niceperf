@@ -1,7 +1,7 @@
 use std::{
-    ffi::{OsStr, OsString},
+    ffi::{OsString},
     fmt, fs,
-    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, SocketAddr},
     os::unix::io::{AsRawFd, RawFd},
     sync::Arc,
 };
@@ -578,7 +578,7 @@ pub struct QuicServer {
 
 impl QuicClient {
     pub fn new(
-        bind_interface: Option<&str>, // Interface to bind to
+        _bind_interface: Option<&str>, // Interface to bind to
         bind_address: Option<(IpAddr, u16)>, // Address to bind to
         cert_path: Option<&str>,      // Path to the certificate
     ) -> Result<Self> {
@@ -619,7 +619,7 @@ impl QuicServer {
     pub fn new(addr: (IpAddr, u16)) -> Result<Self> {
         let socket = UDPSocket::new(None, None)?; // We do not bind to a
                                                   // Create a quinn client to a specific address
-        let std_sock = std::net::UdpSocket::from(
+        let _std_sock = std::net::UdpSocket::from(
             socket.get_ref().try_clone()?.try_clone()?,
         );
 
@@ -655,7 +655,7 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
     }
 }
 fn configure_client(cert_path: Option<&str>) -> Result<ClientConfig> {
-    let mut roots = rustls::RootCertStore::empty();
+    let _roots = rustls::RootCertStore::empty();
 
     let cert_path = cert_path.unwrap_or("cert.der");
     let cert_path = std::env::current_dir()?.join(cert_path);
