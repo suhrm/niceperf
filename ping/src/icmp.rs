@@ -9,6 +9,7 @@ use common::{interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Statistics};
 use etherparse::{
     IcmpEchoHeader, Icmpv4Header, Icmpv4Type,
 };
+use tokio::signal;
 
 
 use crate::{
@@ -186,6 +187,11 @@ impl ICMPClient {
 
 
 
+                },
+                _= signal::ctrl_c() => {
+                    // Print on a new line, because some terminals will print "^C" in which makes the text look ugly
+                    println!("\nCtrl-C received, exiting");
+                    break
                 }
 
             }

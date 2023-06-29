@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use common::{interface_to_ipaddr, Statistics, UDPSocket};
 use serde::{Deserialize, Serialize};
-use tokio::net::UdpSocket as tokioUdpSocket;
+use tokio::{net::UdpSocket as tokioUdpSocket, signal};
 
 use crate::{
     args,
@@ -151,6 +151,11 @@ impl UDPClient {
 
 
 
+                },
+                _= signal::ctrl_c() => {
+                    // Print on a new line, because some terminals will print "^C" in which makes the text look ugly
+                    println!("\nCtrl-C received, exiting");
+                    break
                 }
 
             }

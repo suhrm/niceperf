@@ -10,6 +10,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream},
+    signal
 };
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
@@ -158,6 +159,11 @@ impl TCPClient {
                     else {
                         println!("{} bytes from {}: tcp_pay_seq={} time={:.3} ms", frame.len(), result.src_addr, result.seq, result.rtt);
                     }
+                },
+                _= signal::ctrl_c() => {
+                    // Print on a new line, because some terminals will print "^C" in which makes the text look ugly
+                    println!("\nCtrl-C received, exiting");
+                    break
                 }
             }
         }
