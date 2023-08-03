@@ -16,8 +16,6 @@ pub enum Modes {
     /// Set Niceperf throughput to run in server mode
     #[command(arg_required_else_help = true)]
     Server {
-        #[command(subcommand)]
-        proto: Protocol,
         /// Set the listen address for the control channel
         #[arg(long, default_value = "0.0.0.0")]
         listen_addr: IpAddr,
@@ -29,8 +27,8 @@ pub enum Modes {
     /// Set Niceperf throughput to run in client mode
     #[command(arg_required_else_help = true)]
     Client {
-        #[command(subcommand)]
-        proto: Protocol,
+        // #[command(subcommand)]
+        // proto: Protocol,
         #[arg(long)]
         /// Set the destination address for the control channel
         dst_addr: IpAddr,

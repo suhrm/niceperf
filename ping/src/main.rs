@@ -8,7 +8,6 @@ use anyhow::Result;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let args = args::Opts::parse();
-
     match args.mode {
         args::Modes::Client { proto } => match proto {
             args::Protocol::Tcp(opts) => {
@@ -38,6 +37,7 @@ async fn main() -> Result<()> {
             }
         },
     };
+
     Ok(())
 }
 

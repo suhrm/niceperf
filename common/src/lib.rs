@@ -630,6 +630,7 @@ impl QuicServer {
         Ok(Self { server, socket })
     }
 }
+
 /// Dummy certificate verifier that treats any certificate as valid.
 /// NOTE, such verification is vulnerable to MITM attacks, but convenient for
 /// testing.
