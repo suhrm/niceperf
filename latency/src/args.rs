@@ -1,8 +1,9 @@
 use std::net::IpAddr;
 
 use clap::{Args, Parser, Subcommand};
+use serde::{Deserialize, Serialize};
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Deserialize, Serialize)]
 #[command(author, version, about)]
 pub struct Opts {
     #[command(subcommand)]
@@ -11,7 +12,7 @@ pub struct Opts {
     dont_fragment: Option<bool>,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Deserialize, Serialize)]
 pub enum Modes {
     /// Set Niceperf throughput to run in server mode
     #[command(arg_required_else_help = true)]
@@ -27,8 +28,9 @@ pub enum Modes {
     /// Set Niceperf throughput to run in client mode
     #[command(arg_required_else_help = true)]
     Client {
-        // #[command(subcommand)]
-        // proto: Protocol,
+        #[command(subcommand)]
+        proto: Protocol,
+
         #[arg(long)]
         /// Set the destination address for the control channel
         dst_addr: IpAddr,
@@ -38,20 +40,39 @@ pub enum Modes {
     },
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, Deserialize, Serialize)]
 pub enum Protocol {
     #[command(arg_required_else_help = true)]
-    /// Set Niceperf ping to run in TCP mode
+    /// Set Niceperf latency to run in TCP mode
     Tcp(TCPOpts),
     #[command(arg_required_else_help = true)]
-    /// Set Niceperf ping to run in UDP mode
+    /// Set Niceperf latency to run in UDP mode
     Udp(UDPOpts),
     #[command(arg_required_else_help = true)]
-    /// Set Niceperf ping to run in QUIC mode
+    /// Set Niceperf latency to run in QUIC mode
     Quic(QuicOpts),
+
+    #[command(arg_required_else_help = true)]
+    /// Set Niceperf latency to run from config file
+    File(FileOpts),
 }
 
-#[derive(Args, Clone, Debug)]
+#[derive(Args, Clone, Debug, Deserialize, Serialize)]
+pub struct FileOpts {
+    /// Path to the config file
+    #[arg(long, short)]
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Config {
+    #[serde(flatten)]
+    pub common_opts: CommonOpts,
+    #[serde(flatten)]
+    pub proto: Protocol,
+}
+
+#[derive(Args, Clone, Debug, Deserialize, Serialize)]
 pub struct CommonOpts {
     /// length of the payload
     #[arg(long, short, default_value = "64")]
@@ -74,8 +95,11 @@ pub struct CommonOpts {
     /// Set the amount of packets to preload before following the interval
     #[arg(long, default_value = "1")]
     pub preload: Option<u64>,
+    /// Set the filepath to the cert file
+    #[arg(long)]
+    pub cert_path: Option<String>,
 }
-#[derive(Args, Clone, Debug)]
+#[derive(Args, Clone, Debug, Deserialize, Serialize)]
 pub struct TCPOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
@@ -97,7 +121,7 @@ pub struct TCPOpts {
     pub mss: Option<u16>,
 }
 // TODO:: Handle server and client options for UDP separately?
-#[derive(Args, Clone, Debug)]
+#[derive(Args, Clone, Debug, Deserialize, Serialize)]
 pub struct UDPOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
@@ -113,7 +137,7 @@ pub struct UDPOpts {
     pub dst_addr: IpAddr,
 }
 
-#[derive(Args, Clone, Debug)]
+#[derive(Args, Clone, Debug, Deserialize, Serialize)]
 pub struct QuicOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,

@@ -1,9 +1,14 @@
 use std::{fmt, fs::File as StdFile};
 
 use anyhow::Result;
+use header::Logging;
 use tokio::{fs::File, io::AsyncWriteExt};
+pub trait Logging {
+    fn header(&self) -> String;
+}
 pub struct PingLogger {
     logger: tokio::fs::File,
+    header_written: bool,
 }
 
 impl PingLogger {
@@ -11,17 +16,24 @@ impl PingLogger {
         let logger = StdFile::create(file_name)?;
         let logger = File::from_std(logger);
 
-        Ok(PingLogger { logger })
+        Ok(PingLogger {
+            logger,
+            header_written: false,
+        })
     }
     pub async fn log<T>(&mut self, msg: &T) -> Result<()>
     where
-        T: fmt::Display,
+        T: fmt::Display + Logging,
     {
+        if !self.header_written {
+            self.logger.write_all(msg.header().as_bytes()).await?;
+            self.header_written = true;
+        }
         self.logger.write_all(msg.to_string().as_bytes()).await?;
         Ok(())
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Logging)]
 pub struct PingResult {
     pub seq: u16,
     pub unique_seq: u128,
@@ -34,31 +46,7 @@ pub struct PingResult {
     pub src_addr: String,
 }
 
-impl fmt::Display for PingResult {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{},{},{},{},{},{},{},{},{}\n",
-            self.seq,
-            self.unique_seq,
-            self.ttl,
-            self.rtt,
-            self.size,
-            self.send_time,
-            self.recv_time,
-            self.dst_addr,
-            self.src_addr
-        )
-    }
-}
-
-impl PingResult {
-    pub fn header() -> String {
-        "seq,unique_seq,ttl,rtt,size,send_time,recv_time,dst_addr,src_addr\n"
-            .to_string()
-    }
-}
-
+#[derive(Debug, Logging)]
 pub struct UDPEchoResult {
     pub seq: u128,
     pub send_timestamp: u128,
@@ -69,22 +57,7 @@ pub struct UDPEchoResult {
     pub dst_addr: String,
 }
 
-impl fmt::Display for UDPEchoResult {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{},{},{},{},{},{},{}\n",
-            self.seq,
-            self.send_timestamp,
-            self.server_timestamp,
-            self.recv_timestamp,
-            self.rtt,
-            self.dst_addr,
-            self.src_addr
-        )
-    }
-}
-
+#[derive(Debug, Logging)]
 pub struct TCPEchoResult {
     pub seq: u128,
     pub send_timestamp: u128,
@@ -94,21 +67,4 @@ pub struct TCPEchoResult {
     pub src_addr: String,
     pub dst_addr: String,
     pub cc: String,
-}
-
-impl fmt::Display for TCPEchoResult {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{},{},{},{},{},{},{},{}\n",
-            self.seq,
-            self.send_timestamp,
-            self.server_timestamp,
-            self.recv_timestamp,
-            self.rtt,
-            self.dst_addr,
-            self.src_addr,
-            self.cc
-        )
-    }
 }
