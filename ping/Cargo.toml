@@ -20,4 +20,3 @@ tokio-util = "*"
 futures = "*"
 futures-util = "*"
 ctor = {}
-header = { path = "../header-derive" }

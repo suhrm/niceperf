@@ -5,19 +5,16 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use common::{interface_to_ipaddr, Statistics, TCPSocket};
+use common::{interface_to_ipaddr, Logger, Statistics, TCPSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream},
-    signal
+    signal,
 };
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use crate::{
-    args,
-    logger::{PingLogger, TCPEchoResult},
-};
+use crate::{args, logger::TCPEchoResult};
 
 pub struct TCPClient {
     socket: TokioTcpStream,
@@ -28,7 +25,7 @@ pub struct TCPClient {
     identifier: u16,
     src_port: Option<u16>,
     dst_port: u16,
-    logger: Option<PingLogger>,
+    logger: Option<Logger>,
     cc: String,
     rtt_stats: Statistics,
 }
@@ -55,7 +52,7 @@ impl TCPClient {
         )?;
 
         let logger = match args.common_opts.file.clone() {
-            Some(file_name) => Some(PingLogger::new(file_name)?),
+            Some(file_name) => Some(Logger::new(file_name)?),
             None => None,
         };
 

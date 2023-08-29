@@ -1,38 +1,4 @@
-use std::{fmt, fs::File as StdFile};
-
-use anyhow::Result;
-use header::Logging;
-use tokio::{fs::File, io::AsyncWriteExt};
-pub trait Logging {
-    fn header(&self) -> String;
-}
-pub struct PingLogger {
-    logger: tokio::fs::File,
-    header_written: bool,
-}
-
-impl PingLogger {
-    pub fn new(file_name: String) -> Result<PingLogger> {
-        let logger = StdFile::create(file_name)?;
-        let logger = File::from_std(logger);
-
-        Ok(PingLogger {
-            logger,
-            header_written: false,
-        })
-    }
-    pub async fn log<T>(&mut self, msg: &T) -> Result<()>
-    where
-        T: fmt::Display + Logging,
-    {
-        if !self.header_written {
-            self.logger.write_all(msg.header().as_bytes()).await?;
-            self.header_written = true;
-        }
-        self.logger.write_all(msg.to_string().as_bytes()).await?;
-        Ok(())
-    }
-}
+use common::Logging;
 #[derive(Debug, Logging)]
 pub struct PingResult {
     pub seq: u16,

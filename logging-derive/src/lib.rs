@@ -20,12 +20,10 @@ fn impl_logging(ast: &syn::DeriveInput) -> TokenStream {
         }) => named,
         _ => panic!("Only Structs are supported"),
     };
-    let mut field_names = Vec::new();
-    for field in fields {
-        let field_name = field.ident.as_ref().unwrap();
-        field_names.push(field_name);
-    }
-
+    let field_names = fields
+        .iter()
+        .map(|field| field.ident.as_ref().unwrap())
+        .collect::<Vec<_>>();
     let log_format = field_names
         .iter()
         .map(|_| "{}".to_string())
@@ -51,6 +49,5 @@ fn impl_logging(ast: &syn::DeriveInput) -> TokenStream {
             }
         }
     };
-    eprintln!("{}", expanded);
     expanded.into()
 }

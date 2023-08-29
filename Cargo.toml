@@ -4,9 +4,7 @@ members = [
   "throughput",
   "ping",
   "common",
-  "header-derive",
+  "logging-derive",
 ]
 [workspace.dependencies]
 anyhow = "1.0.68" 
-[workspace.dev-dependencies]
-ctor = "*"

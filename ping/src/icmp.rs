@@ -1,4 +1,3 @@
-
 use std::{
     net::IpAddr,
     time::{SystemTime, UNIX_EPOCH},
@@ -6,19 +5,14 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use common::{interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Statistics};
-use etherparse::{
-    IcmpEchoHeader, Icmpv4Header, Icmpv4Type,
-};
+use etherparse::{IcmpEchoHeader, Icmpv4Header, Icmpv4Type};
 use tokio::signal;
 
-
-use crate::{
-    args,
-    logger::{PingLogger, PingResult},
-};
+use crate::{args, logger::PingResult};
+use common::Logger;
 pub struct ICMPClient {
     /// Logger
-    logger: Option<PingLogger>,
+    logger: Option<Logger>,
     /// Common options
     common: args::CommonOpts,
     /// ICMP socket
@@ -49,7 +43,7 @@ impl ICMPClient {
         let socket = ICMPSocket::new(Some(iface), None)?;
 
         let logger = match args.common_opts.file.clone() {
-            Some(file_name) => Some(PingLogger::new(file_name)?),
+            Some(file_name) => Some(Logger::new(file_name)?),
             None => None,
         };
 

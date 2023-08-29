@@ -1,5 +1,5 @@
 use std::{
-    ffi::{OsString},
+    ffi::OsString,
     fmt, fs,
     net::{IpAddr, SocketAddr},
     os::unix::io::{AsRawFd, RawFd},
@@ -580,7 +580,7 @@ impl QuicClient {
     pub fn new(
         _bind_interface: Option<&str>, // Interface to bind to
         bind_address: Option<(IpAddr, u16)>, // Address to bind to
-        cert_path: Option<&str>,      // Path to the certificate
+        cert_path: Option<&str>,       // Path to the certificate
     ) -> Result<Self> {
         let socket = UDPSocket::new(None, None)?; // We do not bind to a
                                                   // Create a quinn client to a specific address
@@ -770,6 +770,40 @@ mod tests {
             fut.await??;
         }
 
+        Ok(())
+    }
+}
+pub use logging_macro::*;
+pub trait Logging {
+    fn header(&self) -> String;
+}
+
+use tokio::{fs::File, io::AsyncWriteExt};
+
+pub struct Logger {
+    logger: tokio::fs::File,
+    header_written: bool,
+}
+
+impl Logger {
+    pub fn new(file_name: String) -> Result<Logger> {
+        let logger = std::fs::File::create(file_name)?;
+        let logger = File::from_std(logger);
+
+        Ok(Logger {
+            logger,
+            header_written: false,
+        })
+    }
+    pub async fn log<T>(&mut self, msg: &T) -> Result<()>
+    where
+        T: fmt::Display + Logging,
+    {
+        if !self.header_written {
+            self.logger.write_all(msg.header().as_bytes()).await?;
+            self.header_written = true;
+        }
+        self.logger.write_all(msg.to_string().as_bytes()).await?;
         Ok(())
     }
 }

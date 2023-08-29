@@ -233,6 +233,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libc",
+ "logging-macro",
  "nix",
  "pnet_datalink",
  "quinn",
@@ -411,15 +412,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "header"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -502,6 +494,17 @@ name = "log"
 version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
+
+[[package]]
+name = "logging-macro"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "tokio",
+]
 
 [[package]]
 name = "memchr"
@@ -644,7 +647,6 @@ dependencies = [
  "etherparse",
  "futures",
  "futures-util",
- "header",
  "rand",
  "serde",
  "serde_bytes",

@@ -9,10 +9,8 @@ use common::{interface_to_ipaddr, Statistics, UDPSocket};
 use serde::{Deserialize, Serialize};
 use tokio::{net::UdpSocket as tokioUdpSocket, signal};
 
-use crate::{
-    args,
-    logger::{PingLogger, UDPEchoResult},
-};
+use crate::{args, logger::UDPEchoResult};
+use common::Logger;
 
 pub struct UDPClient {
     socket: tokio::net::UdpSocket,
@@ -23,7 +21,7 @@ pub struct UDPClient {
     identifier: u16,
     src_port: Option<u16>,
     dst_port: u16,
-    logger: Option<PingLogger>,
+    logger: Option<Logger>,
     rtt_stats: Statistics,
 }
 
@@ -45,7 +43,7 @@ impl UDPClient {
         )?;
 
         let logger = match args.common_opts.file.clone() {
-            Some(file_name) => Some(PingLogger::new(file_name)?),
+            Some(file_name) => Some(Logger::new(file_name)?),
             None => None,
         };
 

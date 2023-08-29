@@ -1,5 +1,5 @@
 [package]
-name = "header"
+name = "logging-macro"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,6 +9,8 @@ edition = "2021"
 syn = {version = "2.0", features = ["extra-traits"]}
 quote = "1.0.33"
 proc-macro2 = "1.0"
+tokio = {version = "*", features=["full"]}
+anyhow = {}
 
 [lib]
 proc-macro = true
