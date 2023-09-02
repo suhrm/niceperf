@@ -14,7 +14,7 @@ use tokio::{
 };
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use crate::{args, logger::TCPEchoResult};
+use crate::{args, logger::{TCPEchoResult, PingResult}};
 
 pub struct TCPClient {
     socket: TokioTcpStream,
@@ -25,7 +25,7 @@ pub struct TCPClient {
     identifier: u16,
     src_port: Option<u16>,
     dst_port: u16,
-    logger: Option<Logger>,
+    logger: Option<Logger<TCPEchoResult>>,
     cc: String,
     rtt_stats: Statistics,
 }

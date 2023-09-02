@@ -4,15 +4,16 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use common::{interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Statistics};
+use common::{
+    interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Logger, Statistics,
+};
 use etherparse::{IcmpEchoHeader, Icmpv4Header, Icmpv4Type};
 use tokio::signal;
 
 use crate::{args, logger::PingResult};
-use common::Logger;
 pub struct ICMPClient {
     /// Logger
-    logger: Option<Logger>,
+    logger: Option<Logger<PingResult>>,
     /// Common options
     common: args::CommonOpts,
     /// ICMP socket
@@ -103,9 +104,8 @@ impl ICMPClient {
         loop {
             tokio::select! {
                 _ = pacing_timer.tick() => {
-                    if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
+                    if  self.common.count.is_some() && (self.internal_couter >= self.common.count.unwrap() as u128) {
                         break;
-
                     }
                     // Build ICMP packet
                     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();

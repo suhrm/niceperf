@@ -45,7 +45,6 @@ fn impl_logging(ast: &syn::DeriveInput) -> TokenStream {
         impl std::fmt::Display for #name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, concat!(#log_format,"\n"), #(self.#field_names),*)
-
             }
         }
     };

@@ -21,7 +21,7 @@ pub struct UDPClient {
     identifier: u16,
     src_port: Option<u16>,
     dst_port: u16,
-    logger: Option<Logger>,
+    logger: Option<Logger<UDPEchoResult>>,
     rtt_stats: Statistics,
 }
 

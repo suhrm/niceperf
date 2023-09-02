@@ -1,6 +1,7 @@
 use std::{
     ffi::OsString,
     fmt, fs,
+    io::Write,
     net::{IpAddr, SocketAddr},
     os::unix::io::{AsRawFd, RawFd},
     sync::Arc,
@@ -780,29 +781,24 @@ pub trait Logging {
 
 use tokio::{fs::File, io::AsyncWriteExt};
 
-pub struct Logger {
+pub struct Logger<T> {
     logger: tokio::fs::File,
-    header_written: bool,
+    _marker: std::marker::PhantomData<T>,
 }
-
-impl Logger {
-    pub fn new(file_name: String) -> Result<Logger> {
-        let logger = std::fs::File::create(file_name)?;
+/// A simple logger that logs to a file the CSV representation of the
+/// provided type `T`. When the logger is created, it will write the
+impl<T: Logging + std::fmt::Display + Default> Logger<T> {
+    pub fn new(file_name: String) -> Result<Logger<T>> {
+        let mut logger = std::fs::File::create(file_name)?;
+        let logging_header = T::default().header();
+        logger.write_all(logging_header.as_bytes())?;
         let logger = File::from_std(logger);
-
         Ok(Logger {
             logger,
-            header_written: false,
+            _marker: std::marker::PhantomData,
         })
     }
-    pub async fn log<T>(&mut self, msg: &T) -> Result<()>
-    where
-        T: fmt::Display + Logging,
-    {
-        if !self.header_written {
-            self.logger.write_all(msg.header().as_bytes()).await?;
-            self.header_written = true;
-        }
+    pub async fn log(&mut self, msg: &T) -> Result<()> {
         self.logger.write_all(msg.to_string().as_bytes()).await?;
         Ok(())
     }

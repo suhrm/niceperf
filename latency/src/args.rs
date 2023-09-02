@@ -66,13 +66,11 @@ pub struct FileOpts {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
-    #[serde(flatten)]
     pub common_opts: CommonOpts,
-    #[serde(flatten)]
     pub proto: Protocol,
 }
 
-#[derive(Args, Clone, Debug, Deserialize, Serialize)]
+#[derive(Args, Clone, Debug, Deserialize, Serialize, Default)]
 pub struct CommonOpts {
     /// length of the payload
     #[arg(long, short, default_value = "64")]
@@ -101,8 +99,6 @@ pub struct CommonOpts {
 }
 #[derive(Args, Clone, Debug, Deserialize, Serialize)]
 pub struct TCPOpts {
-    #[command(flatten)]
-    pub common_opts: CommonOpts,
     // TODO: Same as with UDP, do we need the source port and address?
     /// Set the source port
     // #[arg(long)]
@@ -123,8 +119,6 @@ pub struct TCPOpts {
 // TODO:: Handle server and client options for UDP separately?
 #[derive(Args, Clone, Debug, Deserialize, Serialize)]
 pub struct UDPOpts {
-    #[command(flatten)]
-    pub common_opts: CommonOpts,
     // TODO: is Src Port needed?
     /* /// Set the source port
     #[arg(long, short)]
@@ -139,8 +133,6 @@ pub struct UDPOpts {
 
 #[derive(Args, Clone, Debug, Deserialize, Serialize)]
 pub struct QuicOpts {
-    #[command(flatten)]
-    pub common_opts: CommonOpts,
     /// Set the destination port
     #[arg(long)]
     pub dst_port: u16,

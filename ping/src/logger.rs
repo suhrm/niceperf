@@ -1,5 +1,5 @@
 use common::Logging;
-#[derive(Debug, Logging)]
+#[derive(Debug, Logging, Default)]
 pub struct PingResult {
     pub seq: u16,
     pub unique_seq: u128,
@@ -12,7 +12,7 @@ pub struct PingResult {
     pub src_addr: String,
 }
 
-#[derive(Debug, Logging)]
+#[derive(Debug, Logging, Default)]
 pub struct UDPEchoResult {
     pub seq: u128,
     pub send_timestamp: u128,
@@ -23,7 +23,7 @@ pub struct UDPEchoResult {
     pub dst_addr: String,
 }
 
-#[derive(Debug, Logging)]
+#[derive(Debug, Logging, Default)]
 pub struct TCPEchoResult {
     pub seq: u128,
     pub send_timestamp: u128,

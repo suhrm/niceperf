@@ -3,9 +3,10 @@ mod args;
 mod tcp;
 mod traits;
 use std::{collections::HashMap, net::IpAddr};
+mod protocol;
 
 use anyhow::{anyhow, Result};
-use clap::Parser;
+use clap::{arg, Parser};
 use common::QuicClient;
 use futures_util::{SinkExt, StreamExt};
 use quinn::{Connection, RecvStream, SendStream};
@@ -16,7 +17,10 @@ use tokio_util::codec::{
     Framed, FramedRead, FramedWrite, LengthDelimitedCodec,
 };
 
-use crate::traits::{Latency, LatencyHandler};
+use crate::{
+    protocol::ServerReply,
+    traits::{Latency, LatencyHandler},
+};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -40,6 +44,8 @@ async fn main() -> Result<()> {
                     config.common_opts.cert_path.as_deref(),
                 )
                 .await?;
+                client.send_config(&config).await?;
+                client.response_handler().await?;
             }
         },
         args::Modes::Server {
@@ -59,6 +65,12 @@ struct CtrlClient {
     connection: quinn::Connection,
     tx: FramedWrite<SendStream, LengthDelimitedCodec>,
     rx: FramedRead<RecvStream, LengthDelimitedCodec>,
+}
+
+struct CtrlClientBuilder {
+    addr: (IpAddr, u16),
+    iface: Option<&'static str>,
+    cert_path: Option<&'static str>,
 }
 
 impl CtrlClient {
@@ -81,25 +93,33 @@ impl CtrlClient {
     }
 
     pub async fn send_config(&mut self, config: &args::Config) -> Result<()> {
-        let config = bincode::serialize(config)?;
-        self.tx.send(config.into()).await?;
+        let config_msg = bincode::serialize(
+            &protocol::ClientRequest::NewTest(config.clone()),
+        )?;
+
+        self.tx.send(config_msg.into()).await?;
         Ok(())
     }
 
     pub async fn response_handler(&mut self) -> Result<()> {
         loop {
-            // tokio::select! {
-            //     Some(data) = self.rx.next() => {
-            //         let data = data?;
-            //         let data = data.to_vec();
-            //         let data: args::Response = bincode::deserialize(&data)?;
-            //         match data {
-            //             args::Response::Latency(latency) => {
-            //                 println!("Latency: {:?}", latency);
-            //             }
-            //         }
-            //     }
-            // }
+            tokio::select! {
+                Some(Ok(data)) = self.rx.next() => {
+                    let response: protocol::ServerResponse = bincode::deserialize(&data)?;
+                    match response {
+                        protocol::ServerResponse::Ok(reply) => {
+                            match reply {
+                                protocol::ServerReply::NewTest(_config) => {
+                                    todo!();
+                                }
+                            }
+                        }
+                        protocol::ServerResponse::Error(_err) => {
+                            todo!();
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -138,8 +158,9 @@ impl CtrlServer {
                 },
 
                 // Handle incoming data
-                Some(data) = self.stream_readers.next() => {
-                        println!("Received: {:?}", data);
+                Some((client_id, Ok(data))) = self.stream_readers.next() => {
+                        let msg: protocol::ClientMessage = bincode::deserialize(&data)?;
+                        self.handle_client_msg(client_id, msg).await?;
                 },
 
                 // Handle user interrupt
@@ -157,43 +178,49 @@ impl CtrlServer {
             }
         }
     }
+
+    async fn handle_client_msg(
+        &self,
+        client_id: usize,
+        msg: protocol::ClientMessage,
+    ) -> Result<()> {
+        let response = match msg {
+            protocol::ClientMessage::Request(request) => match request {
+                protocol::ClientRequest::NewTest(config) => {
+                    todo!();
+                }
+            },
+            protocol::ClientMessage::Response(response) => {
+                todo!();
+            }
+        };
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
-
-    use common::QuicClient;
-    use futures_util::SinkExt;
-
     use super::*;
 
     #[tokio::test(flavor = "current_thread")]
-    async fn test_server() -> Result<()> {
-        let server_addr = SocketAddr::from(([127, 0, 0, 1], 4434));
-        let mut server =
-            CtrlServer::new((server_addr.ip(), server_addr.port()))?;
-        let fut = tokio::spawn(async move {
-            server.run().await?;
+    async fn test_new_test_request() -> Result<()> {
+        let test_opts = args::Config {
+            common_opts: args::CommonOpts::default(),
+            proto: args::Protocol::Udp(args::UDPOpts {
+                dst_port: 9999,
+                dst_addr: "10.0.0.1".parse()?,
+            }),
+        };
+        let mut server = CtrlServer::new(("127.0.0.1".parse()?, 5555))?;
 
-            Ok::<(), anyhow::Error>(())
+        tokio::spawn(async move {
+            server.run().await.unwrap();
         });
-        let client = QuicClient::new(None, None, None)?;
 
-        let con = client
-            .connect((server_addr.ip(), server_addr.port()))
-            .await?;
-        let (send, mut _recv) = con.open_bi().await?;
-        let mut framed_sender =
-            FramedWrite::new(send, LengthDelimitedCodec::new());
-        framed_sender
-            .send(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].into())
-            .await?;
-        framed_sender
-            .send(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].into())
-            .await?;
+        let mut client =
+            CtrlClient::new(("127.0.0.1".parse()?, 5555), None, None).await?;
+        client.send_config(&test_opts).await?;
+        client.response_handler().await?;
 
-        fut.await??;
         Ok(())
     }
 }
