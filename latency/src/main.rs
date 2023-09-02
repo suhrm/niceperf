@@ -26,11 +26,11 @@ use crate::{
 async fn main() -> Result<()> {
     let args = args::Opts::parse();
     match args.mode {
-        args::Modes::Client {
+        args::Modes::Client(args::Client {
             dst_addr,
             dst_port,
             proto,
-        } => match proto {
+        }) => match proto {
             args::Protocol::Tcp(_) => todo!(),
             args::Protocol::Udp(_) => todo!(),
             args::Protocol::Quic(_) => todo!(),
@@ -48,11 +48,14 @@ async fn main() -> Result<()> {
                 client.response_handler().await?;
             }
         },
-        args::Modes::Server {
+        args::Modes::Server(args::Server {
             listen_addr,
             listen_port,
-        } => {
-            let mut server = CtrlServer::new((listen_addr, listen_port))?;
+            data_port_range,
+        }) => {
+            let mut server =
+                CtrlServer::new((listen_addr, listen_port), data_port_range)?;
+
             server.run().await?;
         }
     }
@@ -65,12 +68,6 @@ struct CtrlClient {
     connection: quinn::Connection,
     tx: FramedWrite<SendStream, LengthDelimitedCodec>,
     rx: FramedRead<RecvStream, LengthDelimitedCodec>,
-}
-
-struct CtrlClientBuilder {
-    addr: (IpAddr, u16),
-    iface: Option<&'static str>,
-    cert_path: Option<&'static str>,
 }
 
 impl CtrlClient {
@@ -130,10 +127,11 @@ struct CtrlServer {
     stream_readers:
         StreamMap<usize, FramedRead<RecvStream, LengthDelimitedCodec>>,
     sink_writers: HashMap<usize, FramedWrite<SendStream, LengthDelimitedCodec>>,
+    port_range: Option<Vec<u16>>,
 }
 
 impl CtrlServer {
-    fn new(addr: (IpAddr, u16)) -> Result<Self> {
+    fn new(addr: (IpAddr, u16), port_range: Option<Vec<u16>>) -> Result<Self> {
         let conn = common::QuicServer::new(addr)?;
 
         Ok(Self {
@@ -141,6 +139,7 @@ impl CtrlServer {
             clients: HashMap::new(),
             stream_readers: StreamMap::new(),
             sink_writers: HashMap::new(),
+            port_range,
         })
     }
 
@@ -180,20 +179,41 @@ impl CtrlServer {
     }
 
     async fn handle_client_msg(
-        &self,
+        &mut self,
         client_id: usize,
         msg: protocol::ClientMessage,
     ) -> Result<()> {
         let response = match msg {
             protocol::ClientMessage::Request(request) => match request {
                 protocol::ClientRequest::NewTest(config) => {
-                    todo!();
+                    match config.proto {
+                        args::Protocol::Tcp(_) => todo!(),
+                        args::Protocol::Udp(_) => todo!(),
+                        args::Protocol::Quic(_) => todo!(),
+                        args::Protocol::File(_) => todo!(),
+                        default => {
+                            let err =
+                                format!("Unsupported protocol: {:?}", default);
+                            protocol::ServerResponse::Error(
+                                protocol::ServerError {
+                                    code: 1,
+                                    message: err.into(),
+                                },
+                            )
+                        }
+                    }
                 }
             },
             protocol::ClientMessage::Response(response) => {
                 todo!();
             }
         };
+        self.sink_writers
+            .get_mut(&client_id)
+            .ok_or_else(|| anyhow!("Client not found"))?
+            .send(bincode::serialize(&response)?.into())
+            .await?;
+        Ok(())
     }
 }
 
@@ -210,7 +230,7 @@ mod tests {
                 dst_addr: "10.0.0.1".parse()?,
             }),
         };
-        let mut server = CtrlServer::new(("127.0.0.1".parse()?, 5555))?;
+        let mut server = CtrlServer::new(("127.0.0.1".parse()?, 5555), None)?;
 
         tokio::spawn(async move {
             server.run().await.unwrap();

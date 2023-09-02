@@ -16,28 +16,37 @@ pub struct Opts {
 pub enum Modes {
     /// Set Niceperf throughput to run in server mode
     #[command(arg_required_else_help = true)]
-    Server {
-        /// Set the listen address for the control channel
-        #[arg(long, default_value = "0.0.0.0")]
-        listen_addr: IpAddr,
-        /// Set the listen port for the control channel
-        #[arg(long, default_value = "4443")]
-        listen_port: u16,
-    },
+    Server(Server),
 
     /// Set Niceperf throughput to run in client mode
     #[command(arg_required_else_help = true)]
-    Client {
-        #[command(subcommand)]
-        proto: Protocol,
+    Client(Client),
+}
+#[derive(Args, Debug, Deserialize, Serialize)]
+pub struct Client {
+    #[command(subcommand)]
+    pub proto: Protocol,
 
-        #[arg(long)]
-        /// Set the destination address for the control channel
-        dst_addr: IpAddr,
-        /// Set the destination port for the control channel
-        #[arg(long, default_value = "4443")]
-        dst_port: u16,
-    },
+    #[arg(long)]
+    /// Set the destination address for the control channel
+    pub dst_addr: IpAddr,
+    /// Set the destination port for the control channel
+    #[arg(long, default_value = "4443")]
+    pub dst_port: u16,
+}
+
+#[derive(Args, Debug, Deserialize, Serialize, Clone)]
+pub struct Server {
+    /// Set the listen address for the control channel
+    #[arg(long, default_value = "0.0.0.0")]
+    pub listen_addr: IpAddr,
+    /// Set the listen port for the control channel
+    #[arg(long, default_value = "4443")]
+    pub listen_port: u16,
+    /// Port range to use for data channel, if not specified, will use
+    /// ephemeral port
+    #[arg(long, value_parser, num_args = 1.., value_delimiter = ',')]
+    pub data_port_range: Option<Vec<u16>>,
 }
 
 #[derive(Subcommand, Debug, Clone, Deserialize, Serialize)]
