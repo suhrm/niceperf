@@ -13,9 +13,7 @@ use quinn::{Connection, RecvStream, SendStream};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::StreamMap;
-use tokio_util::codec::{
-    Framed, FramedRead, FramedWrite, LengthDelimitedCodec,
-};
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 use crate::{
     protocol::ServerReply,
@@ -148,18 +146,32 @@ impl CtrlServer {
             tokio::select! {
                 //Accept new connections
                 Some(incomming) = self.conn.server.accept() => {
-                        let connection = incomming.await?;
-                        let (tx, rx) = connection.accept_bi().await?;
-                        let stable_id = connection.stable_id();
-                        self.stream_readers.insert(stable_id, FramedRead::new(rx, LengthDelimitedCodec::new()));
-                        self.sink_writers.insert(stable_id, FramedWrite::new(tx, LengthDelimitedCodec::new()));
-                        self.clients.insert(stable_id, connection);
+                    let connection = incomming.await?;
+                    let (tx, rx) = connection.accept_bi().await?;
+                    let stable_id = connection.stable_id();
+                    self.stream_readers.insert(stable_id, FramedRead::new(rx, LengthDelimitedCodec::new()));
+                    self.sink_writers.insert(stable_id, FramedWrite::new(tx, LengthDelimitedCodec::new()));
+                    self.clients.insert(stable_id, connection);
                 },
 
                 // Handle incoming data
                 Some((client_id, Ok(data))) = self.stream_readers.next() => {
-                        let msg: protocol::ClientMessage = bincode::deserialize(&data)?;
-                        self.handle_client_msg(client_id, msg).await?;
+                    let msg = bincode::deserialize(&data);
+                    match msg {
+                        Ok(client_msg) => {self.handle_client_msg(client_id, client_msg).await?;},
+                        Err(err) => {
+                            let err =
+                                format!("Unsupported protocol: {:?}", err);
+                                protocol::ServerResponse::Error(
+                                    protocol::ServerError {
+                                        code: 1,
+                                        message: err.clone().into(),
+                                    },
+                            );
+                            let err_msg = bincode::serialize(&err)?;
+                            self.sink_writers.get_mut(&client_id).unwrap().send(err_msg.into()).await?;
+                        },
+                    }
                 },
 
                 // Handle user interrupt
@@ -191,16 +203,6 @@ impl CtrlServer {
                         args::Protocol::Udp(_) => todo!(),
                         args::Protocol::Quic(_) => todo!(),
                         args::Protocol::File(_) => todo!(),
-                        default => {
-                            let err =
-                                format!("Unsupported protocol: {:?}", default);
-                            protocol::ServerResponse::Error(
-                                protocol::ServerError {
-                                    code: 1,
-                                    message: err.into(),
-                                },
-                            )
-                        }
                     }
                 }
             },
