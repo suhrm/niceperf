@@ -89,4 +89,4 @@ Basically iperf but with a few quality of life improvements performance tool.
 - [ ] set don't fragment bit on ipv4 headers
 - [ ] get server output iperf?
 - [ ] server addrress should be public ip/reachable from outside
-  - [ ] In case of udp reply to the same address as the request came from 
+- [ ] In case of udp reply to the same address as the request came from 

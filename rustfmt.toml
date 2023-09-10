@@ -7,3 +7,6 @@ group_imports = "StdExternalCrate"
 imports_granularity = "Crate"
 condense_wildcard_suffixes = true
 use_small_heuristics = "Default"
+empty_item_single_line = false
+force_multiline_blocks = true
+error_on_unformatted = true

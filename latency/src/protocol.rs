@@ -25,6 +25,13 @@ pub struct ServerError {
 pub enum ClientMessage {
     Request(ClientRequest),
     Response(ClientReply),
+    Handshake(ClientHandshake),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ClientHandshake {
+    pub id: u64,
+    pub protocol: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -48,4 +55,11 @@ pub struct ClientReplyOk {
 pub struct ClientReplyError {
     pub code: u16,
     pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum TestType {
+    Tcp,
+    Udp,
+    Quic,
 }

@@ -31,6 +31,7 @@ pub struct ICMPClient {
     rtt_stats: Statistics,
 }
 
+
 impl ICMPClient {
     pub fn new(args: args::ICMPOpts) -> Result<ICMPClient> {
         let iface = args

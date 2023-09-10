@@ -23,35 +23,37 @@ impl ICMPSocket {
     ) -> Result<ICMPSocket> {
         // Check bind_addr is an IPv4 or IPv6 address
         let socket = match bind_address {
-            Some(addr) => match addr {
-                IpAddr::V4(_) => {
-                    let socket = Socket::new(
-                        Domain::IPV4,
-                        Type::RAW,
-                        Some(Protocol::ICMPV4),
-                    )?;
-                    socket.set_nonblocking(true)?;
+            Some(addr) => {
+                match addr {
+                    IpAddr::V4(_) => {
+                        let socket = Socket::new(
+                            Domain::IPV4,
+                            Type::RAW,
+                            Some(Protocol::ICMPV4),
+                        )?;
+                        socket.set_nonblocking(true)?;
 
-                    match bind_interface {
-                        Some(bi) => bind_to_device(socket, bi)?,
-                        None => socket,
+                        match bind_interface {
+                            Some(bi) => bind_to_device(socket, bi)?,
+                            None => socket,
+                        }
+                    }
+
+                    IpAddr::V6(_) => {
+                        let socket = Socket::new(
+                            Domain::IPV6,
+                            Type::RAW,
+                            Some(Protocol::ICMPV6),
+                        )?;
+                        socket.set_nonblocking(true)?;
+
+                        match bind_interface {
+                            Some(bi) => bind_to_device(socket, bi)?,
+                            None => socket,
+                        }
                     }
                 }
-
-                IpAddr::V6(_) => {
-                    let socket = Socket::new(
-                        Domain::IPV6,
-                        Type::RAW,
-                        Some(Protocol::ICMPV6),
-                    )?;
-                    socket.set_nonblocking(true)?;
-
-                    match bind_interface {
-                        Some(bi) => bind_to_device(socket, bi)?,
-                        None => socket,
-                    }
-                }
-            },
+            }
             None => {
                 let socket = Socket::new(
                     Domain::IPV4,
@@ -149,35 +151,37 @@ impl UDPSocket {
     ) -> Result<UDPSocket> {
         // Check bind_addr is an IPv4 or IPv6 address
         let socket = match bind_address {
-            Some(addr) => match addr.0 {
-                IpAddr::V4(_) => {
-                    let socket = Socket::new(
-                        Domain::IPV4,
-                        Type::DGRAM,
-                        Some(Protocol::UDP),
-                    )?;
-                    socket.set_nonblocking(true)?;
+            Some(addr) => {
+                match addr.0 {
+                    IpAddr::V4(_) => {
+                        let socket = Socket::new(
+                            Domain::IPV4,
+                            Type::DGRAM,
+                            Some(Protocol::UDP),
+                        )?;
+                        socket.set_nonblocking(true)?;
 
-                    match bind_interface {
-                        Some(bi) => bind_to_device(socket, bi)?,
-                        None => socket,
+                        match bind_interface {
+                            Some(bi) => bind_to_device(socket, bi)?,
+                            None => socket,
+                        }
+                    }
+
+                    IpAddr::V6(_) => {
+                        let socket = Socket::new(
+                            Domain::IPV6,
+                            Type::DGRAM,
+                            Some(Protocol::UDP),
+                        )?;
+                        socket.set_nonblocking(true)?;
+
+                        match bind_interface {
+                            Some(bi) => bind_to_device(socket, bi)?,
+                            None => socket,
+                        }
                     }
                 }
-
-                IpAddr::V6(_) => {
-                    let socket = Socket::new(
-                        Domain::IPV6,
-                        Type::DGRAM,
-                        Some(Protocol::UDP),
-                    )?;
-                    socket.set_nonblocking(true)?;
-
-                    match bind_interface {
-                        Some(bi) => bind_to_device(socket, bi)?,
-                        None => socket,
-                    }
-                }
-            },
+            }
             None => {
                 let socket = Socket::new(
                     Domain::IPV4,
@@ -215,6 +219,11 @@ impl UDPSocket {
     pub fn get_ref(&self) -> &Socket {
         &self.0
     }
+    pub fn connect(&self, addr: (IpAddr, u16)) -> Result<()> {
+        let addr = SocketAddr::new(addr.0, addr.1);
+        self.0.connect(&addr.into())?;
+        Ok(())
+    }
 }
 
 // Create new TCP socket
@@ -230,35 +239,37 @@ impl TCPSocket {
     ) -> Result<TCPSocket> {
         // Check bind_addr is an IPv4 or IPv6 address
         let socket = match bind_address {
-            Some(addr) => match addr.0 {
-                IpAddr::V4(_) => {
-                    let socket = Socket::new(
-                        Domain::IPV4,
-                        Type::STREAM,
-                        Some(Protocol::TCP),
-                    )?;
-                    socket.set_nonblocking(true)?;
+            Some(addr) => {
+                match addr.0 {
+                    IpAddr::V4(_) => {
+                        let socket = Socket::new(
+                            Domain::IPV4,
+                            Type::STREAM,
+                            Some(Protocol::TCP),
+                        )?;
+                        socket.set_nonblocking(true)?;
 
-                    match bind_interface {
-                        Some(bi) => bind_to_device(socket, bi)?,
-                        None => socket,
+                        match bind_interface {
+                            Some(bi) => bind_to_device(socket, bi)?,
+                            None => socket,
+                        }
+                    }
+
+                    IpAddr::V6(_) => {
+                        let socket = Socket::new(
+                            Domain::IPV6,
+                            Type::STREAM,
+                            Some(Protocol::TCP),
+                        )?;
+                        socket.set_nonblocking(true)?;
+
+                        match bind_interface {
+                            Some(bi) => bind_to_device(socket, bi)?,
+                            None => socket,
+                        }
                     }
                 }
-
-                IpAddr::V6(_) => {
-                    let socket = Socket::new(
-                        Domain::IPV6,
-                        Type::STREAM,
-                        Some(Protocol::TCP),
-                    )?;
-                    socket.set_nonblocking(true)?;
-
-                    match bind_interface {
-                        Some(bi) => bind_to_device(socket, bi)?,
-                        None => socket,
-                    }
-                }
-            },
+            }
             None => {
                 let socket = Socket::new(
                     Domain::IPV4,
@@ -324,6 +335,11 @@ impl TCPSocket {
     pub fn get_ref(&self) -> &Socket {
         &self.0
     }
+    
+    pub fn as_raw_fd(&self) -> RawFd {
+        self.0.as_raw_fd()
+    }
+
     pub fn connect(&mut self, addr: SocketAddr) -> Result<()> {
         self.0.set_nonblocking(false)?; // Set to blocking as we are waiting for a connection
                                         // otherwise we get a WouldBlock error
@@ -585,9 +601,7 @@ impl QuicClient {
     ) -> Result<Self> {
         let socket = UDPSocket::new(None, None)?; // We do not bind to a
                                                   // Create a quinn client to a specific address
-        let std_sock = std::net::UdpSocket::from(
-            socket.get_ref().try_clone()?.try_clone()?,
-        );
+        let std_sock = std::net::UdpSocket::from(socket.get_ref().try_clone()?);
         // TODO: This is a bit hacky, but it works for now.
 
         let client_config = configure_client(cert_path)?;
@@ -595,9 +609,11 @@ impl QuicClient {
         // control channel?
         let mut client = match bind_address {
             Some(addr) => quinn::Endpoint::client(addr.into())?,
-            None => quinn::Endpoint::client(
-                ("0.0.0.0".parse::<IpAddr>()?, 0).into(),
-            )?,
+            None => {
+                quinn::Endpoint::client(
+                    ("0.0.0.0".parse::<IpAddr>()?, 0).into(),
+                )?
+            }
         };
 
         client.set_default_client_config(client_config);
