@@ -11,7 +11,8 @@ pub enum ServerResponse {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ServerReply {
-    NewTest(args::Config),
+    NewTest(u64, args::Config),
+    Handshake(u64),
     // Stuff goes here
 }
 
@@ -36,7 +37,7 @@ pub struct ClientHandshake {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ClientRequest {
-    NewTest(args::Config),
+    NewTest(u64, args::Config),
 }
 
 #[derive(Serialize, Deserialize, Debug)]

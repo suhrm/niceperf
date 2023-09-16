@@ -7,6 +7,7 @@ use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr},
     os::fd::FromRawFd,
+    time,
 };
 mod protocol;
 
@@ -27,44 +28,54 @@ use crate::{
 };
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+async fn main() {
     let args = args::Opts::parse();
     match args.mode {
-        args::Modes::Client(args::Client {
-            dst_addr,
-            dst_port,
-            proto,
-        }) => {
-            match proto {
-                args::Protocol::Tcp(_) => todo!(),
-                args::Protocol::Udp(_) => todo!(),
-                args::Protocol::Quic(_) => todo!(),
-                args::Protocol::File(fileopts) => {
-                    let config_file = std::fs::File::open(fileopts.path)?;
-                    let config: args::Config =
-                        serde_json::from_reader(config_file)?;
-                    let mut client = CtrlClient::new(
-                        (dst_addr, dst_port),
-                        config.common_opts.iface.as_deref(),
-                        config.common_opts.cert_path.as_deref(),
-                    )
-                    .await?;
-                    client.send_config(&config).await?;
-                    client.response_handler().await?;
-                }
-            }
+        args::Modes::Client(client_args) => {
+            client_app(client_args).await.unwrap();
         }
-        args::Modes::Server(args::Server {
-            listen_addr,
-            listen_port,
-            data_port_range,
-        }) => {
-            let mut server =
-                CtrlServer::new((listen_addr, listen_port), data_port_range)?;
-            server.run().await?;
+        args::Modes::Server(server_args) => {
+            server_app(server_args).await.unwrap();
         }
     }
+}
 
+async fn server_app(args: args::Server) -> Result<()> {
+    let mut server = CtrlServer::new(
+        (args.listen_addr, args.listen_port),
+        args.data_port_range,
+    )
+    .unwrap();
+    server.run().await.unwrap();
+    Ok(())
+}
+
+async fn client_app(args: args::Client) -> Result<()> {
+    let config = match args.config_type {
+        args::ConfigType::File { path } => {
+            let config_file = std::fs::File::open(path).unwrap();
+            let config: args::Config =
+                serde_json::from_reader(config_file).unwrap();
+            args::Config {
+                common_opts: config.common_opts,
+                proto: config.proto,
+            }
+        }
+        args::ConfigType::Protocol { proto, common_opts } => {
+            args::Config { common_opts, proto }
+        }
+    };
+
+    let mut client = CtrlClient::new(
+        (args.dst_addr, args.dst_port),
+        None, // TODO: is this needed.unwrap()
+        args.cert_path.as_deref(),
+    )
+    .await
+    .unwrap();
+    client.send_config(&config).await.unwrap();
+
+    client.response_handler().await.unwrap();
     Ok(())
 }
 
@@ -73,6 +84,8 @@ struct CtrlClient {
     connection: quinn::Connection,
     tx: FramedWrite<SendStream, LengthDelimitedCodec>,
     rx: FramedRead<RecvStream, LengthDelimitedCodec>,
+    handshake_handler: HashMap<usize, tokio::sync::oneshot::Sender<()>>,
+    id: usize,
 }
 
 impl CtrlClient {
@@ -81,24 +94,31 @@ impl CtrlClient {
         iface: Option<&str>,
         cert_path: Option<&str>,
     ) -> Result<Self> {
-        let conn = common::QuicClient::new(iface, None, cert_path)?;
-        let connection = conn.connect(addr).await?;
-        let (tx, rx) = connection.open_bi().await?;
+        let conn = common::QuicClient::new(iface, None, cert_path).unwrap();
+        let connection = conn.connect(addr).await.unwrap();
+        let (tx, rx) = connection.open_bi().await.unwrap();
         let tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
         let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
+        let id = connection.stable_id();
         Ok(Self {
             conn,
             connection,
             tx,
             rx,
+            handshake_handler: HashMap::new(),
+            id,
         })
     }
 
     pub async fn send_config(&mut self, config: &args::Config) -> Result<()> {
-        let config_msg = bincode::serialize(
-            &protocol::ClientRequest::NewTest(config.clone()),
-        )?;
-        self.tx.send(config_msg.into()).await?;
+        let config_msg = bincode::serialize(&protocol::ClientMessage::Request(
+            protocol::ClientRequest::NewTest(
+                self.id.clone() as u64,
+                config.clone(),
+            ),
+        ))
+        .unwrap();
+        self.tx.send(config_msg.into()).await.unwrap();
         Ok(())
     }
 
@@ -106,17 +126,30 @@ impl CtrlClient {
         loop {
             tokio::select! {
                 Some(Ok(data)) = self.rx.next() => {
-                    let response = bincode::deserialize(&data)?;
+
+                    let response = bincode::deserialize(&data).unwrap();
                     match response {
                         protocol::ServerResponse::Ok(reply) => {
+
                             match reply {
-                                protocol::ServerReply::NewTest(_config) => {
-                                    todo!();
+                                protocol::ServerReply::NewTest(id, config) => {
+                                    let (tx, rx) = tokio::sync::oneshot::channel();
+                                    let id = id as usize;
+                                    self.handshake_handler.insert(id, tx);
+                                    dbg!(&self.id);
+                                    self.test_from_config(config, rx).await.unwrap();
+                                }
+                                protocol::ServerReply::Handshake(id) => {
+
+                                    let id = id as usize;
+                                    dbg!(id);
+                                    let tx = self.handshake_handler.remove(&id).expect("id not found");
+                                    tx.send(()).unwrap();
                                 }
                             }
                         }
-                        protocol::ServerResponse::Error(_err) => {
-                            todo!();
+                        protocol::ServerResponse::Error(err) => {
+                            panic!("Server error: {:?}", err);
                         }
                     }
                 },
@@ -128,7 +161,38 @@ impl CtrlClient {
             }
         }
     }
+    async fn test_from_config(
+        &mut self,
+        conf: args::Config,
+        rx: tokio::sync::oneshot::Receiver<()>,
+    ) -> Result<()> {
+        match conf.proto {
+            args::ProtocolType::Tcp(_) => todo!(),
+            args::ProtocolType::Udp(opts) => {
+                tokio::spawn(async move {
+                    let u = UdpLatency::<Unconnected>::new(
+                        (opts.dst_addr, opts.dst_port),
+                        0,
+                    )
+                    .unwrap();
+                    // let (tx, rx) = tokio::sync::oneshot::channel();
+                    let u = u
+                        .handshake(rx, Timeout(10000), Interval(1000))
+                        .await
+                        .unwrap();
+                });
+                Ok(())
+            }
+
+            args::ProtocolType::Quic(_) => todo!(),
+        }
+    }
 }
+
+struct RunnerInfo {
+    fut: tokio::task::JoinHandle<()>,
+}
+
 struct CtrlServer {
     conn: common::QuicServer,
     clients: HashMap<usize, quinn::Connection>,
@@ -136,17 +200,27 @@ struct CtrlServer {
         StreamMap<usize, FramedRead<RecvStream, LengthDelimitedCodec>>,
     sink_writers: HashMap<usize, FramedWrite<SendStream, LengthDelimitedCodec>>,
     port_range: Option<Vec<u16>>,
+    // Used to send async messages to the main loop for async tasks that don't
+    runners: HashMap<usize, RunnerInfo>,
+    // finish immediately
+    async_msg_tx:
+        tokio::sync::mpsc::Receiver<(usize, protocol::ServerResponse)>,
+    async_msg_rx: tokio::sync::mpsc::Sender<(usize, protocol::ServerResponse)>,
 }
 
 impl CtrlServer {
     fn new(addr: (IpAddr, u16), port_range: Option<Vec<u16>>) -> Result<Self> {
-        let conn = common::QuicServer::new(addr)?;
+        let conn = common::QuicServer::new(addr).unwrap();
+        let (async_msg_rx, async_msg_tx) = tokio::sync::mpsc::channel(100);
         Ok(Self {
             conn,
             clients: HashMap::new(),
             stream_readers: StreamMap::new(),
             sink_writers: HashMap::new(),
             port_range,
+            runners: HashMap::new(),
+            async_msg_rx,
+            async_msg_tx,
         })
     }
 
@@ -155,25 +229,34 @@ impl CtrlServer {
             tokio::select! (
                 //Accept new connections
                 Some(incomming) = self.conn.server.accept() => {
-                    self.handle_incomming_connection(incomming).await?;
+                    self.handle_incomming_connection(incomming).await.unwrap();
                 },
                 // Handle incoming data
                 Some((client_id, Ok(data))) = self.stream_readers.next() => {
+
                     let msg = bincode::deserialize(&data);
                     match msg {
                         Ok(client_msg) => {
-                            self.handle_client_msg(client_id, client_msg).await?;
+                            self.handle_client_msg(client_id, client_msg).await.unwrap();
                         },
                         Err(err) => {
-                            self.handle_error(client_id, err.into()).await?;
+                            self.handle_error(client_id, err.into()).await.unwrap();
                         },
+
                     }
                 },
+
+                // Handle async messages
+                Some((id, msg)) = self.async_msg_tx.recv() => {
+                    dbg!("Sending response to client ", &msg);
+                    self.send_response(id, msg).await.unwrap();
+                },
+
                 // Handle user interrupt
                 _ = tokio::signal::ctrl_c() => {
                     println!("Ctrl-C received, shutting down");
                     for (_, tx) in self.sink_writers.iter_mut() {
-                        tx.close().await?;
+                        tx.close().await.unwrap();
                     }
 
                     for (_, conn) in self.clients.iter() {
@@ -188,8 +271,8 @@ impl CtrlServer {
         &mut self,
         incomming: quinn::Connecting,
     ) -> Result<()> {
-        let connection = incomming.await?;
-        let (tx, rx) = connection.accept_bi().await?;
+        let connection = incomming.await.unwrap();
+        let (tx, rx) = connection.accept_bi().await.unwrap();
         let stable_id = connection.stable_id();
         self.stream_readers.insert(
             stable_id,
@@ -215,9 +298,11 @@ impl CtrlServer {
         });
         self.sink_writers
             .get_mut(&client_id)
-            .ok_or_else(|| anyhow!("Client {} not found", client_id))?
-            .send(bincode::serialize(&err)?.into())
-            .await?;
+            .ok_or_else(|| anyhow!("Client {} not found", client_id))
+            .unwrap()
+            .send(bincode::serialize(&err).unwrap().into())
+            .await
+            .unwrap();
         Ok(())
     }
 
@@ -226,15 +311,68 @@ impl CtrlServer {
         client_id: usize,
         msg: protocol::ClientMessage,
     ) -> Result<()> {
-        let response = match msg {
+        match msg {
             protocol::ClientMessage::Request(request) => {
                 match request {
-                    protocol::ClientRequest::NewTest(config) => {
-                        match config.proto {
-                            args::Protocol::Tcp(_) => todo!(),
-                            args::Protocol::Udp(_) => todo!(),
-                            args::Protocol::Quic(_) => todo!(),
-                            args::Protocol::File(_) => todo!(),
+                    protocol::ClientRequest::NewTest(id, config) => {
+                        match config.proto.clone() {
+                            args::ProtocolType::Tcp(_) => todo!(),
+                            args::ProtocolType::Udp(opts) => {
+                                let async_rx = self.async_msg_rx.clone();
+                                tokio::spawn(async move {
+                                    let (tx, rx) =
+                                        tokio::sync::oneshot::channel::<
+                                            Result<()>,
+                                        >(
+                                        );
+                                    let mut server = UdpLatency::<Server>::new(
+                                        (opts.dst_addr, opts.dst_port),
+                                        client_id.clone(),
+                                    )
+                                    .unwrap();
+
+                                    let u = tokio::spawn(async move {
+                                        let u = server
+                                            .handshake(tx, Timeout(10000))
+                                            .await
+                                            .unwrap();
+                                        u
+                                    })
+                                    .await
+                                    .unwrap();
+
+                                    rx.await.unwrap();
+
+                                    // self.runners.insert(client_id.clone(),
+                                    // RunnerInfo{}
+                                    //     fut: tokio::spawn(async move {
+                                    //         u.run().await.unwrap();
+                                    //     });
+                                    //
+                                    // );
+                                    let response = protocol::ServerResponse::Ok(
+                                        protocol::ServerReply::Handshake(
+                                            id.clone(),
+                                        ),
+                                    );
+                                    async_rx
+                                        .send((client_id, response))
+                                        .await
+                                        .unwrap();
+                                });
+
+                                let response = protocol::ServerResponse::Ok(
+                                    protocol::ServerReply::NewTest(
+                                        id,
+                                        config.clone(),
+                                    ),
+                                );
+                                self.async_msg_rx
+                                    .send((client_id, response))
+                                    .await
+                                    .unwrap();
+                            }
+                            args::ProtocolType::Quic(_) => todo!(),
                         }
                     }
                 }
@@ -244,11 +382,21 @@ impl CtrlServer {
             }
             protocol::ClientMessage::Handshake(_) => todo!(),
         };
+
+        Ok(())
+    }
+    async fn send_response(
+        &mut self,
+        client_id: usize,
+        response: protocol::ServerResponse,
+    ) -> Result<()> {
         self.sink_writers
             .get_mut(&client_id)
-            .ok_or_else(|| anyhow!("Client not found"))?
-            .send(bincode::serialize(&response)?.into())
-            .await?;
+            .ok_or_else(|| anyhow!("Client not found"))
+            .unwrap()
+            .send(bincode::serialize(&response).unwrap().into())
+            .await
+            .unwrap();
         Ok(())
     }
 }
@@ -260,11 +408,12 @@ pub struct UdpLatencyResult {}
 #[derive(Debug, Clone, Serialize, Deserialize, Default, Logging)]
 pub struct TcpLatencyResult {}
 #[non_exhaustive]
-pub struct UdpLatency<State = Unconnected> {
+pub struct UdpLatency<State> {
     state: std::marker::PhantomData<State>,
     pub logger: common::Logger<UdpLatencyResult>,
     socket: tokio::net::UdpSocket,
     id: usize,
+    addr: (IpAddr, u16),
 }
 
 pub struct Connected {}
@@ -295,25 +444,100 @@ impl Into<u64> for Interval {
         self.0
     }
 }
+struct Server {}
+
+impl UnconnectedServer for UdpLatency<Server> {
+    type C = UdpLatency<Connected>;
+    type U = UdpLatency<Server>;
+    fn new(addr: (IpAddr, u16), id: usize) -> Result<Self::U> {
+        let logger = common::Logger::new("test2".into()).unwrap();
+
+        let socket = common::UDPSocket::new(None, Some(addr)).unwrap();
+        let socket = tokio::net::UdpSocket::from_std(
+            socket.get_ref().try_clone().unwrap().try_into().unwrap(),
+        )
+        .unwrap();
+
+        Ok(Self {
+            state: std::marker::PhantomData::<Server>,
+            logger,
+            socket,
+            id,
+            addr,
+        })
+    }
+    async fn handshake(
+        self,
+        complete: tokio::sync::oneshot::Sender<Result<()>>,
+        timeout: Timeout,
+    ) -> Result<Self::C> {
+        let timeout = std::time::Duration::from_millis(timeout.into());
+
+        let mut buf = [0u8; 1024];
+
+        loop {
+            tokio::select! {
+                Ok((len, recv_addr)) = self.socket.recv_from(&mut buf) => {
+                    let msg = bincode::deserialize(&buf[..len]).unwrap();
+
+                    match msg {
+                        protocol::ClientMessage::Handshake(handshake) => {
+                            if handshake.id == 0 as u64 {
+                                complete.send(Ok(())).unwrap();
+                            dbg ! ( "Handshake complete" ) ;
+                            return Ok(UdpLatency {
+                                state: std::marker::PhantomData::<Connected>,
+                                logger: self.logger,
+                                socket: self.socket,
+                                id: self.id,
+                                addr: self.addr,
+                            });
+
+                            }
+                        }
+                        _ => {
+                            continue;
+                        }
+                    }
+                },
+                _ = tokio::time::sleep(timeout) => {
+                    return Err(anyhow!("Handshake timeout"));
+                }
+            }
+        }
+    }
+}
+
+trait UnconnectedServer {
+    type C;
+    type U;
+    fn new(addr: (IpAddr, u16), id: usize) -> Result<Self::U>;
+    async fn handshake(
+        self,
+        complete: tokio::sync::oneshot::Sender<Result<()>>,
+        timeout: Timeout,
+    ) -> Result<Self::C>;
+}
 
 impl UnconnectedClient for UdpLatency<Unconnected> {
     type C = UdpLatency<Connected>;
     type U = UdpLatency<Unconnected>;
     // TODO: Should be created based on received config
     fn new(addr: (IpAddr, u16), id: usize) -> Result<Self::U> {
-        let logger = common::Logger::new("test".into())?;
+        let logger = common::Logger::new("test".into()).unwrap();
 
-        let socket = common::UDPSocket::new(None, None)?;
-        socket.connect(addr)?;
+        let socket = common::UDPSocket::new(None, None).unwrap();
         let socket = tokio::net::UdpSocket::from_std(
-            socket.get_ref().try_clone()?.try_into()?,
-        )?;
+            socket.get_ref().try_clone().unwrap().try_into()?,
+        )
+        .unwrap();
 
         Ok(Self {
             state: std::marker::PhantomData::<Unconnected>,
             logger,
             socket,
             id,
+            addr,
         })
     }
     async fn handshake(
@@ -337,8 +561,8 @@ impl UnconnectedClient for UdpLatency<Unconnected> {
                     break;
                 },
                 _ = handshake_timer.tick() => {
-                    let msg = bincode::serialize(&handshake)?;
-                    self.socket.send(&msg).await?;
+                    let msg = bincode::serialize(&handshake).unwrap();
+                    self.socket.send_to( &msg, self.addr).await.unwrap();
                 },
                 _ = tokio::time::sleep(timeout) => {
                     return Err(anyhow!("Handshake timeout"));
@@ -350,6 +574,7 @@ impl UnconnectedClient for UdpLatency<Unconnected> {
             logger: self.logger,
             socket: self.socket,
             id: self.id,
+            addr: self.addr,
         })
     }
 }
@@ -388,10 +613,10 @@ pub trait Runner<T> {
         loop {
             tokio::select! {
                 _ = send_signal.recv() => {
-                   self.send(&latency_msg).await?;
+                   self.send(&latency_msg).await.unwrap();
                 },
                 Ok(recv_msg) = self.recv(&mut buf) => {
-                    self.logger().log(&recv_msg).await?;
+                    self.logger().log(&recv_msg).await.unwrap();
                 }
                 _ = &mut stop_signal => {
                     break Ok(());
@@ -401,20 +626,26 @@ pub trait Runner<T> {
     }
 }
 
-pub trait Logger<T> {
+pub trait Logger<T>
+where
+    T: Logging + std::fmt::Display,
+{
     fn logger(&mut self) -> &mut common::Logger<T>;
 }
 
 impl ConnectedClient for UdpLatency<Connected> {
     type Msg = UdpLatencyResult;
     async fn send(&mut self, latency_msg: &Self::Msg) -> Result<()> {
-        let msg = bincode::serialize(latency_msg)?;
-        self.socket.send(&msg).await?;
+        let msg = bincode::serialize(latency_msg).unwrap();
+        self.socket.send_to(&msg, self.addr).await.unwrap();
         Ok(())
     }
     async fn recv(&mut self, buf: &mut [u8]) -> Result<Self::Msg> {
-        let len = self.socket.recv(buf).await?;
-        let msg: UdpLatencyResult = bincode::deserialize(&buf[..len])?;
+        let (len, recv_addr) = self.socket.recv_from(buf).await.unwrap();
+        if (recv_addr.ip(), recv_addr.port()) != self.addr {
+            return Err(anyhow!("Received from unknown address"));
+        }
+        let msg: UdpLatencyResult = bincode::deserialize(&buf[..len]).unwrap();
         Ok(msg)
     }
 }
@@ -427,8 +658,6 @@ impl Logger<UdpLatencyResult> for UdpLatency<Connected> {
 
 impl Runner<UdpLatencyResult> for UdpLatency<Connected> {
 }
-
-// TODO: Find out if we want to use this method or the specific one above
 
 pub struct TcpLatency<State = Unconnected> {
     state: std::marker::PhantomData<State>,
@@ -443,9 +672,10 @@ impl UnconnectedClient for TcpLatency<Unconnected> {
     type U = TcpLatency<Unconnected>;
 
     fn new(addr: (IpAddr, u16), id: usize) -> Result<Self::U> {
-        let logger = common::Logger::new("test".into())?;
-        let mut socket = common::TCPSocket::new(None, None, None, None)?;
-        socket.connect(addr.into())?;
+        let logger = common::Logger::new("test".into()).unwrap();
+        let mut socket =
+            common::TCPSocket::new(None, None, None, None).unwrap();
+        socket.connect(addr.into()).unwrap();
         Ok(Self {
             state: std::marker::PhantomData::<Unconnected>,
             logger,
@@ -469,8 +699,9 @@ impl UnconnectedClient for TcpLatency<Unconnected> {
         let timeout = std::time::Duration::from_millis(timeout.into());
         let mut handshake_timer = tokio::time::interval(interval);
         let mut socket = tokio::net::TcpStream::from_std(
-            self.raw_socket.get_ref().try_clone()?.try_into()?,
-        )?;
+            self.raw_socket.get_ref().try_clone().unwrap().try_into()?,
+        )
+        .unwrap();
 
         loop {
             tokio::select! {
@@ -478,8 +709,8 @@ impl UnconnectedClient for TcpLatency<Unconnected> {
                     break;
                 },
                 _ = handshake_timer.tick() => {
-                    let msg = bincode::serialize(&handshake)?;
-                    socket.write_all(&msg).await?;
+                    let msg = bincode::serialize(&handshake).unwrap();
+                    socket.write_all(&msg).await.unwrap();
                 },
 
                 _ = tokio::time::sleep(timeout) => {
@@ -500,22 +731,26 @@ impl UnconnectedClient for TcpLatency<Unconnected> {
 impl ConnectedClient for TcpLatency<Connected> {
     type Msg = TcpLatencyResult;
     async fn send(&mut self, latency_msg: &Self::Msg) -> Result<()> {
-        let msg = bincode::serialize(latency_msg)?;
+        let msg = bincode::serialize(latency_msg).unwrap();
         self.socket
             .as_mut()
-            .ok_or(anyhow!("Not connected"))?
+            .ok_or(anyhow!("Not connected"))
+            .unwrap()
             .write_all(&msg)
-            .await?;
+            .await
+            .unwrap();
         Ok(())
     }
     async fn recv(&mut self, buf: &mut [u8]) -> Result<Self::Msg> {
         let len = self
             .socket
             .as_mut()
-            .ok_or(anyhow!("Not Connected while reading "))?
+            .ok_or(anyhow!("Not Connected while reading "))
+            .unwrap()
             .read(buf)
-            .await?;
-        let msg: TcpLatencyResult = bincode::deserialize(&buf[..len])?;
+            .await
+            .unwrap();
+        let msg: TcpLatencyResult = bincode::deserialize(&buf[..len]).unwrap();
         Ok(msg)
     }
 }
@@ -532,3 +767,38 @@ impl Runner<TcpLatencyResult> for TcpLatency<Connected> {
 
 pub struct QuicLatency {}
 
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_ctrl_proto() -> Result<()> {
+        let client_opts = args::Client {
+            config_type: args::ConfigType::Protocol {
+                proto: args::ProtocolType::Udp(args::UDPOpts {
+                    dst_addr: "127.0.0.1".parse().unwrap(),
+                    dst_port: 55555,
+                }),
+                common_opts: args::CommonOpts::default(),
+            },
+            cert_path: None,
+            dst_addr: "127.0.0.1".parse().unwrap(),
+            dst_port: 8080,
+        };
+
+        let server_opts = args::Server {
+            listen_addr: "127.0.0.1".parse().unwrap(),
+            listen_port: 8080,
+            data_port_range: None,
+        };
+
+        tokio::spawn(async move {
+            server_app(server_opts).await.unwrap();
+            Ok::<(), anyhow::Error>(())
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        client_app(client_opts).await.unwrap();
+
+        Ok(())
+    }
+}

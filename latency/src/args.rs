@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 pub struct Opts {
     #[command(subcommand)]
     pub mode: Modes,
-    #[arg(long, action = clap::ArgAction::SetTrue)]
-    dont_fragment: Option<bool>,
+    // #[arg(long, action = clap::ArgAction::SetTrue)]
+    // dont_fragment: Option<bool>,
 }
 
 #[derive(Subcommand, Debug, Deserialize, Serialize)]
@@ -25,14 +25,35 @@ pub enum Modes {
 #[derive(Args, Debug, Deserialize, Serialize)]
 pub struct Client {
     #[command(subcommand)]
-    pub proto: Protocol,
+    pub config_type: ConfigType,
+    /// Set Niceperf latency to run from config file
 
-    #[arg(long)]
     /// Set the destination address for the control channel
+    #[arg(long)]
     pub dst_addr: IpAddr,
     /// Set the destination port for the control channel
     #[arg(long, default_value = "4443")]
     pub dst_port: u16,
+    /// Set the filepath to the cert file
+    #[arg(long)]
+    pub cert_path: Option<String>,
+}
+
+#[derive(Subcommand, Debug, Deserialize, Serialize)]
+pub enum ConfigType {
+    #[command(arg_required_else_help = true)]
+    /// Set Niceperf latency to run from config file
+    File {
+        #[arg(long, short)]
+        path: String,
+    },
+
+    Protocol {
+        #[command(subcommand)]
+        proto: ProtocolType,
+        #[clap(flatten)]
+        common_opts: CommonOpts,
+    },
 }
 
 #[derive(Args, Debug, Deserialize, Serialize, Clone)]
@@ -50,7 +71,7 @@ pub struct Server {
 }
 
 #[derive(Subcommand, Debug, Clone, Deserialize, Serialize)]
-pub enum Protocol {
+pub enum ProtocolType {
     #[command(arg_required_else_help = true)]
     /// Set Niceperf latency to run in TCP mode
     Tcp(TCPOpts),
@@ -60,10 +81,6 @@ pub enum Protocol {
     #[command(arg_required_else_help = true)]
     /// Set Niceperf latency to run in QUIC mode
     Quic(QuicOpts),
-
-    #[command(arg_required_else_help = true)]
-    /// Set Niceperf latency to run from config file
-    File(FileOpts),
 }
 
 #[derive(Args, Clone, Debug, Deserialize, Serialize)]
@@ -76,7 +93,7 @@ pub struct FileOpts {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub common_opts: CommonOpts,
-    pub proto: Protocol,
+    pub proto: ProtocolType,
 }
 
 #[derive(Args, Clone, Debug, Deserialize, Serialize, Default)]
@@ -102,9 +119,6 @@ pub struct CommonOpts {
     /// Set the amount of packets to preload before following the interval
     #[arg(long, default_value = "1")]
     pub preload: Option<u64>,
-    /// Set the filepath to the cert file
-    #[arg(long)]
-    pub cert_path: Option<String>,
 }
 #[derive(Args, Clone, Debug, Deserialize, Serialize)]
 pub struct TCPOpts {
