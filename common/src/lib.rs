@@ -672,7 +672,7 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
         Ok(rustls::client::ServerCertVerified::assertion())
     }
 }
-fn configure_client(cert_path: Option<&str>) -> Result<ClientConfig> {
+pub fn configure_client(cert_path: Option<&str>) -> Result<ClientConfig> {
     let _roots = rustls::RootCertStore::empty();
 
     let cert_path = cert_path.unwrap_or("cert.der");
@@ -704,7 +704,7 @@ fn configure_client(cert_path: Option<&str>) -> Result<ClientConfig> {
     Ok(client_cfg)
 }
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
-fn configure_server() -> Result<(ServerConfig, Vec<u8>)> {
+pub fn configure_server() -> Result<(ServerConfig, Vec<u8>)> {
     let (cert, key) = match std::fs::read("./cert.der")
         .and_then(|x| Ok((x, std::fs::read("./key.der")?)))
     {

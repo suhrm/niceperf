@@ -1,0 +1,106 @@
+
+pub struct TcpLatency<State = Unconnected> {
+    state: std::marker::PhantomData<State>,
+    logger: common::Logger<TcpLatencyResult>,
+    socket: Option<tokio::net::TcpStream>,
+    raw_socket: common::TCPSocket,
+    id: usize,
+}
+
+impl UnconnectedClient for TcpLatency<Unconnected> {
+    type C = TcpLatency<Connected>;
+    type U = TcpLatency<Unconnected>;
+
+    fn new(addr: (IpAddr, u16), id: usize) -> Result<Self::U> {
+        let logger = common::Logger::new("test".into()).unwrap();
+        let mut socket =
+            common::TCPSocket::new(None, None, None, None).unwrap();
+        socket.connect(addr.into()).unwrap();
+        Ok(Self {
+            state: std::marker::PhantomData::<Unconnected>,
+            logger,
+            socket: None,
+            raw_socket: socket,
+            id,
+        })
+    }
+    async fn handshake(
+        self,
+        mut complete: tokio::sync::oneshot::Receiver<()>,
+        timeout: Timeout,
+        interval: Interval,
+    ) -> Result<Self::C> {
+        let handshake =
+            protocol::ClientMessage::Handshake(protocol::ClientHandshake {
+                id: self.id as u64,
+                protocol: protocol::TestType::Tcp as u64,
+            });
+        let interval = std::time::Duration::from_millis(interval.into());
+        let timeout = std::time::Duration::from_millis(timeout.into());
+        let mut handshake_timer = tokio::time::interval(interval);
+        let mut socket = tokio::net::TcpStream::from_std(
+            self.raw_socket.get_ref().try_clone().unwrap().try_into()?,
+        )
+        .unwrap();
+
+        loop {
+            tokio::select! {
+                _ = &mut complete => {
+                    break;
+                },
+                _ = handshake_timer.tick() => {
+                    let msg = bincode::serialize(&handshake).unwrap();
+                    socket.write_all(&msg).await.unwrap();
+                },
+
+                _ = tokio::time::sleep(timeout) => {
+                    return Err(anyhow!("Handshake timeout"));
+                }
+            }
+        }
+        Ok(TcpLatency {
+            state: std::marker::PhantomData::<Connected>,
+            logger: self.logger,
+            socket: Some(socket),
+            raw_socket: self.raw_socket,
+            id: self.id,
+        })
+    }
+}
+
+impl ConnectedClient for TcpLatency<Connected> {
+    type Msg = TcpLatencyResult;
+    async fn send(&mut self, latency_msg: &Self::Msg) -> Result<()> {
+        let msg = bincode::serialize(latency_msg).unwrap();
+        self.socket
+            .as_mut()
+            .ok_or(anyhow!("Not connected"))
+            .unwrap()
+            .write_all(&msg)
+            .await
+            .unwrap();
+        Ok(())
+    }
+    async fn recv(&mut self, buf: &mut [u8]) -> Result<Self::Msg> {
+        let len = self
+            .socket
+            .as_mut()
+            .ok_or(anyhow!("Not Connected while reading "))
+            .unwrap()
+            .read(buf)
+            .await
+            .unwrap();
+        let msg: TcpLatencyResult = bincode::deserialize(&buf[..len]).unwrap();
+        Ok(msg)
+    }
+}
+
+impl Logger<TcpLatencyResult> for TcpLatency<Connected> {
+    #[inline]
+    fn logger(&mut self) -> &mut common::Logger<TcpLatencyResult> {
+        &mut self.logger
+    }
+}
+
+impl Runner for TcpLatency<Connected> {
+}

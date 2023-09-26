@@ -24,7 +24,7 @@ pub struct ServerError {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ClientMessage {
-    Request(ClientRequest),
+    NewTest(u64, args::Config),
     Response(ClientReply),
     Handshake(ClientHandshake),
 }
@@ -37,7 +37,6 @@ pub struct ClientHandshake {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ClientRequest {
-    NewTest(u64, args::Config),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
