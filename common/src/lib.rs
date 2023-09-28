@@ -10,6 +10,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use pnet_datalink;
 use quinn::{ClientConfig, ServerConfig, VarInt};
+use rustls::client::ServerCertVerifier;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::unix::AsyncFd;
 
@@ -335,7 +336,7 @@ impl TCPSocket {
     pub fn get_ref(&self) -> &Socket {
         &self.0
     }
-    
+
     pub fn as_raw_fd(&self) -> RawFd {
         self.0.as_raw_fd()
     }

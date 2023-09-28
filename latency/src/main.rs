@@ -690,3 +690,62 @@ impl Logger<UdpLatencyResult> for UdpLatency<Connected> {
 
 impl Runner for UdpLatency<Connected> {
 }
+use common;
+use polling;
+use quinn_proto;
+mod test {
+    use std::{net::SocketAddr, sync::Arc};
+
+    use bytes::{Bytes, BytesMut};
+
+    use super::*;
+    #[test]
+    fn test() {
+        assert_eq!(2 + 2, 4);
+    }
+
+    #[test]
+    fn quinn_test() {
+        let now = || std::time::Instant::now();
+        let client_addr = "127.0.0.1:12346".parse().unwrap();
+        let server_addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let mut client_config = common::configure_client(None).unwrap();
+        let mut server_config = common::configure_server().unwrap();
+
+        let client_ep_cfg = quinn_proto::EndpointConfig::default();
+        let server_ep_cfg = quinn_proto::EndpointConfig::default();
+
+        let mut client_ep =
+            quinn_proto::Endpoint::new(Arc::new(client_ep_cfg), None, false);
+        let mut server_ep = quinn_proto::Endpoint::new(
+            Arc::new(server_ep_cfg),
+            Some(Arc::new(server_config.0)),
+            true,
+        );
+
+        let (conn_handle, mut conn) = client_ep
+            .connect(
+                client_config,
+                "127.0.0.1:12345".parse().unwrap(),
+                "localhost",
+            )
+            .unwrap();
+        let transmits = conn.poll_transmit(now(), 100).unwrap();
+        dbg!(&transmits);
+
+        let recv_data = BytesMut::from(transmits.contents.clone().as_ref());
+        let (ser_con_handle, dgram_event) = server_ep
+            .handle(now(), client_addr, Some(server_addr.ip()), None, recv_data)
+            .unwrap();
+        match dgram_event {
+            quinn_proto::DatagramEvent::ConnectionEvent(_) => {
+                print!("connection event");
+                todo!()
+            }
+            quinn_proto::DatagramEvent::NewConnection(_) => {
+                println!("New connection");
+                todo!()
+            }
+        }
+    }
+}

@@ -8,3 +8,5 @@ members = [
 ]
 [workspace.dependencies]
 anyhow = "1.0.68" 
+quinn = "0.10.2"
+rustls = { version = "*", features = ["dangerous_configuration", "quic"] }

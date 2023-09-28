@@ -12,7 +12,7 @@ libc = "0.2.139"
 pnet_datalink = "0.31.0"
 tokio = {version = "*", features=["full"]}
 nix = "0.26.2"
-quinn = {version = "0.9.3", features = ["runtime-tokio", "rustls", "native-certs"]}
-rustls = { version = "0.20.3", features = ["quic", "dangerous_configuration"] }
 rcgen = "0.10.0"
+quinn = "0.10.2"
+rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 logging-macro = {path = "../logging-derive"}
