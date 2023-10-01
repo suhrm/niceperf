@@ -13,6 +13,6 @@ pnet_datalink = "0.31.0"
 tokio = {version = "*", features=["full"]}
 nix = "0.26.2"
 rcgen = "0.10.0"
-quinn = "0.10.2"
+quinn = {git = "https://github.com/suhrm/quinn.git", branch = "main"}
 rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 logging-macro = {path = "../logging-derive"}

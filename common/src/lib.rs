@@ -10,7 +10,6 @@ use std::{
 use anyhow::{anyhow, Result};
 use pnet_datalink;
 use quinn::{ClientConfig, ServerConfig, VarInt};
-use rustls::client::ServerCertVerifier;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::unix::AsyncFd;
 
