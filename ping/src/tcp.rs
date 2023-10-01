@@ -14,7 +14,10 @@ use tokio::{
 };
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use crate::{args, logger::{TCPEchoResult, PingResult}};
+use crate::{
+    args,
+    logger::{PingResult, TCPEchoResult},
+};
 
 pub struct TCPClient {
     socket: TokioTcpStream,
@@ -148,7 +151,7 @@ impl TCPClient {
                         src_addr : src_addr.to_string(),
                         dst_addr : dst_addr.to_string(),
                         cc: self.cc.clone(),
-                        payload_len: frame.len() as u32,
+                        size: frame.len(),
                     };
                     self.rtt_stats.update(rtt);
                     if let Some(logger) = &mut self.logger {

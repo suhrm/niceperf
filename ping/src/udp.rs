@@ -5,12 +5,11 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use common::{interface_to_ipaddr, Statistics, UDPSocket};
+use common::{interface_to_ipaddr, Logger, Statistics, UDPSocket};
 use serde::{Deserialize, Serialize};
 use tokio::{net::UdpSocket as tokioUdpSocket, signal};
 
 use crate::{args, logger::UDPEchoResult};
-use common::Logger;
 
 pub struct UDPClient {
     socket: tokio::net::UdpSocket,
@@ -133,9 +132,9 @@ impl UDPClient {
                         send_timestamp: recv_packet.send_timestamp,
                         server_timestamp: recv_packet.recv_timestamp,
                         rtt: rtt,
+                        size: len,
                         src_addr: self.src_addr.to_string(),
                         dst_addr: self.dst_addr.to_string(),
-                        payload_len: len as u32,
                     };
                     self.rtt_stats.update(rtt);
 
