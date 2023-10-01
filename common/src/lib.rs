@@ -805,7 +805,10 @@ pub struct Logger<T> {
 /// provided type `T`. When the logger is created, it will write the
 impl<T: Logging + std::fmt::Display + Default> Logger<T> {
     pub fn new(file_name: String) -> Result<Logger<T>> {
-        let mut logger = std::fs::File::create(file_name)?;
+        let mut logger = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(file_name)?;
         let logging_header = T::default().header();
         logger.write_all(logging_header.as_bytes())?;
         let logger = File::from_std(logger);

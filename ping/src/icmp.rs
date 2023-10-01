@@ -31,7 +31,6 @@ pub struct ICMPClient {
     rtt_stats: Statistics,
 }
 
-
 impl ICMPClient {
     pub fn new(args: args::ICMPOpts) -> Result<ICMPClient> {
         let iface = args
@@ -162,6 +161,7 @@ impl ICMPClient {
                let result = PingResult {
                    seq: reply_header.seq,
                    rtt,
+                   payload_len: reply_payload.len() as u32,
                    send_time,
                    recv_time,
                    size: len - 20, // We need to subtract the IP header size

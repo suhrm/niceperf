@@ -8,6 +8,7 @@ pub struct PingResult {
     pub size: usize,
     pub send_time: u128,
     pub recv_time: u128,
+    pub payload_len: u32,
     pub dst_addr: String,
     pub src_addr: String,
 }
@@ -19,6 +20,7 @@ pub struct UDPEchoResult {
     pub server_timestamp: u128,
     pub recv_timestamp: u128,
     pub rtt: f64,
+    pub payload_len: u32,
     pub src_addr: String,
     pub dst_addr: String,
 }
@@ -30,6 +32,7 @@ pub struct TCPEchoResult {
     pub server_timestamp: u128,
     pub recv_timestamp: u128,
     pub rtt: f64,
+    pub payload_len: u32,
     pub src_addr: String,
     pub dst_addr: String,
     pub cc: String,

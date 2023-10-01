@@ -4,18 +4,22 @@
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Result;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::UdpSocket,
-};
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 mod args;
 mod protocol;
 mod tcp;
 mod traits;
 mod utils;
-
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LatencyMsg {
+    id: u64,
+    seq: u64,
+    timestamp: u64,
 }
 
 pub trait Latency {

@@ -148,6 +148,7 @@ impl TCPClient {
                         src_addr : src_addr.to_string(),
                         dst_addr : dst_addr.to_string(),
                         cc: self.cc.clone(),
+                        payload_len: frame.len() as u32,
                     };
                     self.rtt_stats.update(rtt);
                     if let Some(logger) = &mut self.logger {

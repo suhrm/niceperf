@@ -135,6 +135,7 @@ impl UDPClient {
                         rtt: rtt,
                         src_addr: self.src_addr.to_string(),
                         dst_addr: self.dst_addr.to_string(),
+                        payload_len: len as u32,
                     };
                     self.rtt_stats.update(rtt);
 
