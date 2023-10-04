@@ -146,9 +146,6 @@ impl UDPClient {
                  // Print regular ping output
                         println!("{} bytes from {}: udp_pay_seq={} time={:.3} ms", len, result.src_addr, result.seq, result.rtt);
                }
-
-
-
                 },
                 _= signal::ctrl_c() => {
                     // Print on a new line, because some terminals will print "^C" in which makes the text look ugly

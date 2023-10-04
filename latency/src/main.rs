@@ -82,7 +82,6 @@ impl UdpLatency<socket_kind::Client> {
 
 impl<Kind> Latency for UdpLatency<Kind> {
     async fn send(&mut self, buf: &[u8]) -> Result<usize> {
-        assert!(self.peer.is_some());
         let len = self.inner.send_to(buf, self.peer.unwrap()).await?;
         Ok(len)
     }
@@ -101,6 +100,73 @@ impl<Kind> Latency for UdpLatency<Kind> {
     }
 }
 
+struct ClientCtx {
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    fut: tokio::task::JoinHandle<()>,
+}
+
+impl ClientCtx {
+    fn new(
+        stop: tokio::sync::oneshot::Sender<()>,
+        fut: tokio::task::JoinHandle<()>,
+    ) -> Self {
+        Self {
+            stop: Some(stop),
+            fut,
+        }
+    }
+}
+
+struct CtrlServer {
+    quinn: common::QuicServer,
+    clients: Vec<ClientCtx>,
+}
+
+impl CtrlServer {
+    fn new(lst_addr: SocketAddr) -> Self {
+        let quinn =
+            common::QuicServer::new((lst_addr.ip(), lst_addr.port())).unwrap();
+        Self {
+            quinn,
+            clients: Vec::new(),
+        }
+    }
+
+    async fn run(&mut self) -> Result<()> {
+        loop {
+            tokio::select! {
+                Some(connecting) = self.quinn.server.accept() => {
+                    let conn = connecting.await?;
+                    let (tx, rx) = conn.open_bi().await?;
+                    self.handle_client(tx, rx).await?;
+                }
+            _ = tokio::signal::ctrl_c() => {
+                    for client in self.clients.iter_mut() {
+                        client.stop.take().unwrap().send(()).unwrap();
+                    }
+                    println!("Ctrl-C received, shutting down");
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_client(
+        &mut self,
+        tx: quinn::SendStream,
+        rx: quinn::RecvStream,
+    ) -> Result<()> {
+        let (stop, stop_rx) = tokio::sync::oneshot::channel();
+        let mut client = Client::new(tx, rx, stop_rx, 1000, 1000, 1000);
+        let fut = tokio::spawn(async move {
+            client.run().await;
+        });
+        self.clients.push(ClientCtx::new(stop, fut));
+        Ok(())
+    }
+}
+
 struct Client {
     ctx: Vec<ConnCtx>,
     timeout: u64,
@@ -108,12 +174,14 @@ struct Client {
     packet_size: u64,
     tx_ctrl: quinn::SendStream,
     rx_ctrl: quinn::RecvStream,
+    stop: tokio::sync::oneshot::Receiver<()>,
 }
 
 impl Client {
     fn new(
         tx_ctrl: quinn::SendStream,
         rx_ctrl: quinn::RecvStream,
+        stop: tokio::sync::oneshot::Receiver<()>,
         timeout: u64,
         interval: u64,
         packet_size: u64,
@@ -125,13 +193,13 @@ impl Client {
             packet_size,
             tx_ctrl,
             rx_ctrl,
+            stop,
         }
     }
 
     async fn run(&mut self) {
         let mut snd_timer =
             tokio::time::interval(Duration::from_millis(self.interval));
-
         let packet_size = self.packet_size;
         assert!(packet_size <= u16::MAX as u64);
         let mut sndbuf = [0u8; u16::MAX as usize];
@@ -155,6 +223,13 @@ impl Client {
                     }
                     break;
                 }
+                _ = &mut self.stop => {
+                    for ctx in self.ctx.iter_mut() {
+                        ctx.stop.take().unwrap().send(()).unwrap();
+                    }
+                    break;
+                }
+
             }
         }
     }
@@ -227,7 +302,7 @@ mod test {
 
         let (p1, mut p2) = tokio::io::duplex(1024);
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let socket = UdpLatency::<socket_kind::Server>::new("");
+        let socket = UdpLatency::<socket_kind::Server>::new("127.0.0.1:12345");
         let mut runner = ConnRunner::new(socket, p1, rx);
         let ctx = ConnCtx::new(p2, tx);
         ctxs.push(ctx);
