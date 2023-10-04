@@ -3,7 +3,7 @@
 
 use std::{net::SocketAddr, time::Duration};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 mod args;
@@ -167,6 +167,11 @@ impl CtrlServer {
     }
 }
 
+mod side {
+    pub struct Server {}
+    pub struct Client {}
+}
+
 struct Client {
     ctx: Vec<ConnCtx>,
     timeout: u64,
@@ -175,6 +180,7 @@ struct Client {
     tx_ctrl: quinn::SendStream,
     rx_ctrl: quinn::RecvStream,
     stop: tokio::sync::oneshot::Receiver<()>,
+    id: u64,
 }
 
 impl Client {
@@ -194,6 +200,7 @@ impl Client {
             tx_ctrl,
             rx_ctrl,
             stop,
+            id: 0,
         }
     }
 
@@ -215,7 +222,7 @@ impl Client {
                 }
                 Ok(Some(len)) = self.rx_ctrl.read(&mut recvbuf) => {
                     let recvbuf = recvbuf[..len].to_vec();
-                    self.tx_ctrl.write_all(&recvbuf).await.unwrap();
+                    self.handle_ctrl_msg(&recvbuf).await;
                 }
                 _ = tokio::time::sleep(Duration::from_millis(self.timeout)) => {
                     for ctx in self.ctx.iter_mut() {
@@ -230,6 +237,42 @@ impl Client {
                     break;
                 }
 
+            }
+        }
+    }
+
+    async fn handle_ctrl_msg(&mut self, msg: &[u8]) {
+        todo!()
+    }
+
+    async fn handshake(
+        &mut self,
+        mut complete: tokio::sync::oneshot::Receiver<()>,
+        timeout: Duration,
+        interval: Duration,
+    ) -> Result<()> {
+        let handshake =
+            protocol::ClientMessage::Handshake(protocol::ClientHandshake {
+                id: self.id as u64,
+                protocol: protocol::TestType::Udp as u64,
+            });
+        let mut handshake_timer = tokio::time::interval(interval);
+
+        loop {
+            tokio::select! {
+                _ = &mut complete => {
+                    break Ok(());
+                },
+                _ = handshake_timer.tick() => {
+                    let msg = bincode::serialize(&handshake).unwrap();
+                    for ctx in self.ctx.iter_mut() {
+                        ctx.bidi.write_all(&msg).await.unwrap();
+                    }
+                },
+
+                _ = tokio::time::sleep(timeout) => {
+                    return Err(anyhow!("handshake timeout"));
+                }
             }
         }
     }
@@ -295,19 +338,53 @@ impl<T: Latency> ConnRunner<T> {
 mod test {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    use super::*;
-    #[tokio::test(flavor = "current_thread")]
-    async fn test() {
-        let mut ctxs = Vec::new();
-
+    async fn test_server() -> ConnCtx {
         let (p1, mut p2) = tokio::io::duplex(1024);
         let (tx, rx) = tokio::sync::oneshot::channel();
         let socket = UdpLatency::<socket_kind::Server>::new("127.0.0.1:12345");
         let mut runner = ConnRunner::new(socket, p1, rx);
         let ctx = ConnCtx::new(p2, tx);
-        ctxs.push(ctx);
         tokio::spawn(async move {
             runner.run().await;
         });
+        ctx
+    }
+    async fn test_client() -> ConnCtx {
+        let (p1, mut p2) = tokio::io::duplex(1024);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let socket = UdpLatency::<socket_kind::Client>::new("127.0.0.1:12345");
+        let mut runner = ConnRunner::new(socket, p1, rx);
+        let ctx = ConnCtx::new(p2, tx);
+        tokio::spawn(async move {
+            runner.run().await;
+        });
+        ctx
+    }
+
+    use super::*;
+    #[tokio::test(flavor = "current_thread")]
+    async fn test() {
+        let mut client_ctx = test_client().await;
+        let mut server_ctx = test_server().await;
+
+        let mut sndbuf = [0u8; u16::MAX as usize];
+        let mut recvbuf = [0u8; u16::MAX as usize];
+
+        let mut snd_timer = tokio::time::interval(Duration::from_millis(1000));
+        let timeout = Duration::from_millis(10000);
+
+        loop {
+            tokio::select! {
+                _ = snd_timer.tick() => {
+                    let sndbuf = "hello".as_bytes().to_vec();
+                    client_ctx.bidi.write_all(&sndbuf).await.unwrap();
+                }
+                Ok(len) = server_ctx.bidi.read(&mut recvbuf) => {
+                    let recvbuf = recvbuf[..len].to_vec();
+                    server_ctx.bidi.write_all(&recvbuf).await.unwrap();
+                    println!("recv: {:?}", recvbuf);
+                }
+            }
+        }
     }
 }
