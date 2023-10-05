@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     net::{IpAddr, SocketAddr},
     time::{SystemTime, UNIX_EPOCH},
@@ -122,11 +123,26 @@ impl TCPClient {
         let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
         let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
 
+        // Recv counter
+        let mut recv_counter = 0;
+        let (send_stop, recv_stop) = tokio::sync::mpsc::channel(1);
+
         loop {
             tokio::select! {
-                _ = pacing_timer .tick() => {
+                _ = pacing_timer.tick() => {
                     if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
-                        break;
+                        if (recv_counter as u128) >= self.common.count.unwrap() as u128 {
+                            break;
+                        }
+                        else {
+                            let stop = send_stop.clone();
+                            tokio::spawn( async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
+                                stop.send(()).await;
+                            });
+                            continue;
+                        }
+
 
                     }
                     payload.seq = self.internal_couter;
@@ -142,6 +158,7 @@ impl TCPClient {
                     let send_timestamp = decoded_packet.send_timestamp;
                     let seq = decoded_packet.seq;
                     let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
+                    recv_counter = seq;
                     let result = TCPEchoResult {
                         seq,
                         rtt,
@@ -161,11 +178,15 @@ impl TCPClient {
                         println!("{} bytes from {}: tcp_pay_seq={} time={:.3} ms", frame.len(), result.src_addr, result.seq, result.rtt);
                     }
                 },
+                _ = recv_stop.recv() => {
+                    break;
+                },
                 _= signal::ctrl_c() => {
                     // Print on a new line, because some terminals will print "^C" in which makes the text look ugly
                     println!("\nCtrl-C received, exiting");
                     break
                 }
+
             }
         }
         println!("{}", self.rtt_stats);
