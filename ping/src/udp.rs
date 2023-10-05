@@ -102,12 +102,29 @@ impl UDPClient {
             recv_timestamp: 0,
             payload: vec![0u8; self.common.len.unwrap() as usize],
         };
+        // Recv counter
+        let mut recv_counter = 0;
+        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel(1);
+        let mut timeout_started = false;
 
         loop {
             tokio::select! {
                 _ = pacing_timer.tick() => {
                     if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
-                        break;
+                        if (recv_counter as u128) >= self.common.count.unwrap() as u128 {
+                            break;
+                        }
+                        else if !timeout_started {
+                            println!("Timeout started waiting for {} packets", self.common.count.unwrap() - recv_counter);
+                            timeout_started = true;
+                            let stop = send_stop.clone();
+                            tokio::spawn( async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
+                                let _ = stop.send(()).await;
+                            });
+                        }
+                        continue;
+
 
                     }
                     // Build UDP echo packet
@@ -136,6 +153,7 @@ impl UDPClient {
                         src_addr: self.src_addr.to_string(),
                         dst_addr: self.dst_addr.to_string(),
                     };
+                    recv_counter += 1;
                     self.rtt_stats.update(rtt);
 
                if self.logger.is_some() {
@@ -146,6 +164,9 @@ impl UDPClient {
                  // Print regular ping output
                         println!("{} bytes from {}: udp_pay_seq={} time={:.3} ms", len, result.src_addr, result.seq, result.rtt);
                }
+                },
+                _ = recv_stop.recv() => {
+                    break;
                 },
                 _= signal::ctrl_c() => {
                     // Print on a new line, because some terminals will print "^C" in which makes the text look ugly

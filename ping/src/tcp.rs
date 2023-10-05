@@ -143,8 +143,8 @@ impl TCPClient {
                                 tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
                                 let _ = stop.send(()).await;
                             });
-                            continue;
                         }
+                        continue;
 
 
                     }

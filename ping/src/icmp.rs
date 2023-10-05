@@ -100,12 +100,28 @@ impl ICMPClient {
         if payload.len() < 16 {
             Err(anyhow!("Payload is too small"))?;
         }
+        // Recv counter
+        let mut recv_counter = 0;
+        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel(1);
+        let mut timeout_started = false;
 
         loop {
             tokio::select! {
                 _ = pacing_timer.tick() => {
-                    if  self.common.count.is_some() && (self.internal_couter >= self.common.count.unwrap() as u128) {
-                        break;
+                    if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
+                        if (recv_counter as u128) >= self.common.count.unwrap() as u128 {
+                            break;
+                        }
+                        else if !timeout_started {
+                            println!("Timeout started waiting for {} packets", self.common.count.unwrap() - recv_counter);
+                            timeout_started = true;
+                            let stop = send_stop.clone();
+                            tokio::spawn( async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
+                                let _ = stop.send(()).await;
+                            });
+                        }
+                        continue;
                     }
                     // Build ICMP packet
                     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -152,6 +168,8 @@ impl ICMPClient {
                    }
                };
 
+                recv_counter += 1;
+
                let reply_payload = icmp_header.1;
                let send_time = u128::from_be_bytes(reply_payload[..16].try_into()?);
                let recv_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -181,6 +199,10 @@ impl ICMPClient {
 
 
 
+                },
+                _ = recv_stop.recv() => {
+                    println!("wait for 10 seconds to receive all the packets");
+                    break;
                 },
                 _= signal::ctrl_c() => {
                     // Print on a new line, because some terminals will print "^C" in which makes the text look ugly
