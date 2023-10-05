@@ -125,7 +125,8 @@ impl TCPClient {
 
         // Recv counter
         let mut recv_counter = 0;
-        let (send_stop, recv_stop) = tokio::sync::mpsc::channel(1);
+        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel(1);
+        let mut timeout_started = false;
 
         loop {
             tokio::select! {
@@ -134,11 +135,13 @@ impl TCPClient {
                         if (recv_counter as u128) >= self.common.count.unwrap() as u128 {
                             break;
                         }
-                        else {
+                        else if !timeout_started {
+                            println!("Timeout started waiting for {} packets", self.common.count.unwrap() - recv_counter);
+                            timeout_started = true;
                             let stop = send_stop.clone();
                             tokio::spawn( async move {
                                 tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
-                                stop.send(()).await;
+                                let _ = stop.send(()).await;
                             });
                             continue;
                         }
@@ -158,7 +161,7 @@ impl TCPClient {
                     let send_timestamp = decoded_packet.send_timestamp;
                     let seq = decoded_packet.seq;
                     let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
-                    recv_counter = seq;
+                    recv_counter += 1;
                     let result = TCPEchoResult {
                         seq,
                         rtt,
@@ -179,6 +182,7 @@ impl TCPClient {
                     }
                 },
                 _ = recv_stop.recv() => {
+                    println!("wait for 10 seconds to receive all the packets");
                     break;
                 },
                 _= signal::ctrl_c() => {
