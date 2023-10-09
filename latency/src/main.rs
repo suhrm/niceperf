@@ -1,9 +1,14 @@
 #![feature(async_fn_in_trait)]
 #![feature(associated_type_defaults)]
 
-use std::{marker::PhantomData, net::SocketAddr, time::Duration};
+use std::{
+    marker::PhantomData,
+    net::SocketAddr,
+    time::{Duration, UNIX_EPOCH},
+};
 
 use anyhow::{anyhow, Result};
+use common::Logging;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 mod args;
@@ -20,6 +25,30 @@ struct LatencyMsg {
     id: u64,
     seq: u64,
     timestamp: u64,
+    payload: Vec<u8>,
+}
+#[derive(Debug, Clone, Default, Logging)]
+struct LatencyResult {
+    id: u64,
+    seq: u64,
+    send_timestamp: u64,
+    recv_timestamp: u64,
+    payload_size: usize,
+}
+
+impl From<LatencyMsg> for LatencyResult {
+    fn from(msg: LatencyMsg) -> Self {
+        Self {
+            id: msg.id,
+            seq: msg.seq,
+            send_timestamp: msg.timestamp,
+            recv_timestamp: std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64,
+            payload_size: msg.payload.len() + 8 + 8 + 8,
+        }
+    }
 }
 
 pub trait Latency {
@@ -331,6 +360,7 @@ impl TestRunner<Ready> {
                     let recvbuf = recvbuf[..len].to_vec();
                     self.handle_msg(&recvbuf).await;
                 }
+
                 _ = tokio::time::sleep(Duration::from_millis(self.timeout)) => {
                     for ctx in self.ctx.iter_mut() {
                         ctx.stop.take().unwrap().send(()).unwrap();
@@ -356,7 +386,7 @@ impl<State> TestRunner<State> {
                 match msg {
                     protocol::MessageType::Handshake(_) => Ok(()),
                     protocol::MessageType::NewTest(id, config) => {
-                        Ok((id, config))
+                        todo!()
                     }
                     protocol::MessageType::Error(err) => {
                         Err(anyhow!("Got err from server"))?
