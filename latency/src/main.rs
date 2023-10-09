@@ -209,6 +209,20 @@ impl TestRunner<NotReady> {
     }
 
     async fn setup(mut self) -> Result<TestRunner<Ready>> {
+        // Do the test setup things
+        match self.side {
+            Side::Client => {
+                // Send the NewTest request
+                // Wait for the NewTest response
+                // Startup the ClientSide Runner
+            }
+            Side::Server => {
+                // Wait for the NewTest request
+                // Startup the ServerSide Runner and reply with the NewTest
+                // response
+            }
+        }
+
         for _ in 0..self.ctx.len() {
             match self.side {
                 Side::Client => {
@@ -315,7 +329,7 @@ impl TestRunner<Ready> {
                 }
                 Ok(Some(len)) = self.rx_ctrl.read(&mut recvbuf) => {
                     let recvbuf = recvbuf[..len].to_vec();
-                    // self as specific type
+                    self.handle_msg(&recvbuf).await;
                 }
                 _ = tokio::time::sleep(Duration::from_millis(self.timeout)) => {
                     for ctx in self.ctx.iter_mut() {
@@ -335,10 +349,20 @@ impl TestRunner<Ready> {
     }
 }
 impl<State> TestRunner<State> {
-    async fn handle_msg(&mut self, msg: &[u8]) {
+    async fn handle_msg(&mut self, msg: &[u8]) -> Result<()> {
         let msg = bincode::deserialize::<protocol::MessageType>(msg).unwrap();
         match self.side {
-            Side::Client => todo!(),
+            Side::Client => {
+                match msg {
+                    protocol::MessageType::Handshake(_) => Ok(()),
+                    protocol::MessageType::NewTest(id, config) => {
+                        Ok((id, config))
+                    }
+                    protocol::MessageType::Error(err) => {
+                        Err(anyhow!("Got err from server"))?
+                    }
+                }
+            }
             Side::Server => todo!(),
         }
     }
