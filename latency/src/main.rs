@@ -1,7 +1,7 @@
 #![feature(async_fn_in_trait)]
 #![feature(associated_type_defaults)]
 
-use std::{net::SocketAddr, time::Duration};
+use std::{marker::PhantomData, net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -30,11 +30,6 @@ pub trait Latency {
 mod socket_kind {
     pub struct Server {}
     pub struct Client {}
-}
-
-mod conn_state {
-    pub struct Connected {}
-    pub struct Disconnected {}
 }
 
 pub struct UdpLatency<Kind> {
@@ -158,30 +153,25 @@ impl CtrlServer {
         rx: quinn::RecvStream,
     ) -> Result<()> {
         let (stop, stop_rx) = tokio::sync::oneshot::channel();
-        let mut client =
-            TestRunner::<side::Client>::new(tx, rx, stop_rx, 1000, 1000, 1000);
+        let client =
+            TestRunner::new(Side::Server, tx, rx, stop_rx, 1000, 1000, 1000);
         let fut = tokio::spawn(async move {
+            let client = client.setup().await.unwrap();
             client.run().await;
         });
         self.clients.push(ClientCtx::new(stop, fut));
         Ok(())
     }
 }
-mod side {
-    pub struct Client {}
-    pub struct Server {}
-    impl Side for Client {
-        type T = Client;
-    }
-    impl Side for Server {
-        type T = Server;
-    }
-    pub trait Side {
-        type T: Side;
-    }
+pub enum Side {
+    Client,
+    Server,
 }
 
-struct TestRunner<Side> {
+struct Ready;
+struct NotReady;
+
+struct TestRunner<State = NotReady> {
     ctx: Vec<ConnCtx>,
     timeout: u64,
     interval: u64,
@@ -190,87 +180,13 @@ struct TestRunner<Side> {
     rx_ctrl: quinn::RecvStream,
     stop: tokio::sync::oneshot::Receiver<()>,
     id: u64,
-    _side: std::marker::PhantomData<Side>,
+    side: Side,
+    state: PhantomData<State>,
 }
 
-impl TestRunner<side::Client> {
-    async fn handle_ctrl_msg(&mut self, msg: &[u8]) {
-        let msg = bincode::deserialize::<protocol::MessageType>(msg).unwrap();
-        match msg {
-            protocol::MessageType::Handshake(id) => {
-                todo!("handle handshake");
-            }
-            protocol::MessageType::NewTest(id, config) => {
-                todo!("handle new test");
-            }
-            protocol::MessageType::Error(err) => {
-                todo!("handle error");
-            }
-        }
-    }
-    async fn handshake(
-        &mut self,
-        mut complete: tokio::sync::oneshot::Receiver<()>,
-        timeout: Duration,
-        interval: Duration,
-    ) -> Result<()> {
-        let handshake = protocol::MessageType::Handshake(self.id as u64);
-        let mut handshake_timer = tokio::time::interval(interval);
-
-        loop {
-            tokio::select! {
-                _ = &mut complete => {
-                    break Ok(());
-                },
-                _ = handshake_timer.tick() => {
-                    let msg = bincode::serialize(&handshake).unwrap();
-                    for ctx in self.ctx.iter_mut() {
-                        ctx.bidi.write_all(&msg).await.unwrap();
-                    }
-                },
-
-                _ = tokio::time::sleep(timeout) => {
-                    return Err(anyhow!("handshake timeout"));
-                }
-            }
-        }
-    }
-}
-impl TestRunner<side::Server> {
-    async fn handle_ctrl_msg(&mut self, msg: &[u8]) {
-        let msg = bincode::deserialize::<protocol::MessageType>(msg).unwrap();
-        match msg {
-            protocol::MessageType::Handshake(id) => {
-                todo!("handle handshake");
-            }
-            protocol::MessageType::NewTest(id, config) => {
-                todo!("handle new test");
-            }
-            protocol::MessageType::Error(err) => {
-                todo!("handle error");
-            }
-        }
-    }
-    async fn handshake(
-        &mut self,
-        mut complete: tokio::sync::oneshot::Sender<()>,
-        timeout: Duration,
-    ) -> Result<()> {
-        let handshake = protocol::MessageType::Handshake(self.id as u64);
-        todo!("handle handshake");
-
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep(timeout) => {
-                    return Err(anyhow!("handshake timeout"));
-                }
-            }
-        }
-    }
-}
-
-impl<Side: side::Side> TestRunner<Side> {
+impl TestRunner<NotReady> {
     fn new(
+        side: Side,
         tx_ctrl: quinn::SendStream,
         rx_ctrl: quinn::RecvStream,
         stop: tokio::sync::oneshot::Receiver<()>,
@@ -287,11 +203,101 @@ impl<Side: side::Side> TestRunner<Side> {
             rx_ctrl,
             stop,
             id: 0,
-            _side: std::marker::PhantomData,
+            side,
+            state: PhantomData,
         }
     }
 
-    async fn run(&mut self) {
+    async fn setup(mut self) -> Result<TestRunner<Ready>> {
+        for _ in 0..self.ctx.len() {
+            match self.side {
+                Side::Client => {
+                    self.handshake(
+                        std::time::Duration::from_millis(10000),
+                        Some(std::time::Duration::from_millis(100)),
+                    )
+                    .await?
+                }
+                Side::Server => {
+                    self.handshake(
+                        std::time::Duration::from_millis(10000),
+                        None,
+                    )
+                    .await?
+                }
+            }
+        }
+
+        Ok(TestRunner::<Ready> {
+            ctx: self.ctx,
+            timeout: self.timeout,
+            interval: self.interval,
+            packet_size: self.packet_size,
+            tx_ctrl: self.tx_ctrl,
+            rx_ctrl: self.rx_ctrl,
+            stop: self.stop,
+            id: self.id,
+            side: self.side,
+            state: PhantomData,
+        })
+    }
+
+    async fn handshake(
+        &mut self,
+        timeout: Duration,
+        interval: Option<Duration>,
+    ) -> Result<()> {
+        let handshake = protocol::MessageType::Handshake(self.id as u64);
+
+        match self.side {
+            Side::Client => {
+                let mut handshake_timer =
+                    tokio::time::interval(interval.unwrap());
+                loop {
+                    tokio::select! {
+                        _ = handshake_timer.tick() => {
+                            let msg = bincode::serialize(&handshake).unwrap();
+                            for ctx in self.ctx.iter_mut() {
+                                ctx.bidi.write_all(&msg).await.unwrap();
+                            }
+                        },
+
+                        _ = tokio::time::sleep(timeout) => {
+                            return Err(anyhow!("handshake timeout"));
+                        }
+                    }
+                }
+            }
+            Side::Server => {
+                let mut recvbuf = [0u8; u16::MAX as usize];
+                loop {
+                    tokio::select! {
+                        Ok(Some(len)) = self.rx_ctrl.read(&mut recvbuf) => {
+                            let recvbuf = recvbuf[..len].to_vec();
+                            let msg: protocol::MessageType = bincode::deserialize(&recvbuf).unwrap();
+                            match msg {
+                                protocol::MessageType::Handshake(id) => {
+                                    self.id = id;
+                                    break;
+                                }
+                                _ => {
+                                    return Err(anyhow!("unexpected message type"));
+                                }
+                            }
+                        },
+                        _ = tokio::time::sleep(timeout) => {
+                            return Err(anyhow!("handshake timeout"));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TestRunner<Ready> {
+    async fn run(mut self) {
         let mut snd_timer =
             tokio::time::interval(Duration::from_millis(self.interval));
         let packet_size = self.packet_size;
@@ -309,7 +315,7 @@ impl<Side: side::Side> TestRunner<Side> {
                 }
                 Ok(Some(len)) = self.rx_ctrl.read(&mut recvbuf) => {
                     let recvbuf = recvbuf[..len].to_vec();
-                   // <&mut TestRunner<Side::T>>::handle_ctrl_msg(&recvbuf).await;
+                    // self as specific type
                 }
                 _ = tokio::time::sleep(Duration::from_millis(self.timeout)) => {
                     for ctx in self.ctx.iter_mut() {
@@ -328,15 +334,30 @@ impl<Side: side::Side> TestRunner<Side> {
         }
     }
 }
-
-#[derive(Debug)]
-struct ConnCtx<State = conn_state::Disconnected> {
-    bidi: tokio::io::DuplexStream,
-    stop: Option<tokio::sync::oneshot::Sender<()>>,
-    state: std::marker::PhantomData<State>,
+impl<State> TestRunner<State> {
+    async fn handle_msg(&mut self, msg: &[u8]) {
+        let msg = bincode::deserialize::<protocol::MessageType>(msg).unwrap();
+        match self.side {
+            Side::Client => todo!(),
+            Side::Server => todo!(),
+        }
+    }
 }
 
-impl ConnCtx<conn_state::Disconnected> {
+#[derive(Debug)]
+pub enum ConnState {
+    Connected,
+    Disconnected,
+}
+
+#[derive(Debug)]
+struct ConnCtx {
+    bidi: tokio::io::DuplexStream,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    state: ConnState,
+}
+
+impl ConnCtx {
     fn new(
         bidi: tokio::io::DuplexStream,
         stop: tokio::sync::oneshot::Sender<()>,
@@ -344,7 +365,7 @@ impl ConnCtx<conn_state::Disconnected> {
         Self {
             bidi,
             stop: Some(stop),
-            state: std::marker::PhantomData,
+            state: ConnState::Connected,
         }
     }
 }
@@ -388,64 +409,6 @@ impl<T: Latency> ConnRunner<T> {
 
 mod test {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    async fn test_server() -> ConnCtx {
-        let (p1, mut p2) = tokio::io::duplex(1024);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let socket = UdpLatency::<socket_kind::Server>::new("127.0.0.1:12345");
-        let mut runner = ConnRunner::new(socket, p1, rx);
-        let ctx = ConnCtx::new(p2, tx);
-        tokio::spawn(async move {
-            runner.run().await;
-        });
-        ctx
-    }
-    async fn test_client() -> ConnCtx {
-        let (p1, mut p2) = tokio::io::duplex(1024);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let socket = UdpLatency::<socket_kind::Client>::new("127.0.0.1:12345");
-        let mut runner = ConnRunner::new(socket, p1, rx);
-        let ctx = ConnCtx::new(p2, tx);
-        tokio::spawn(async move {
-            runner.run().await;
-        });
-        ctx
-    }
-
-    use super::*;
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_runners() {
-        let mut client_ctx = test_client().await;
-        let mut server_ctx = test_server().await;
-
-        let mut sndbuf = [0u8; u16::MAX as usize];
-        let mut recvbuf = [0u8; u16::MAX as usize];
-
-        let mut snd_timer = tokio::time::interval(Duration::from_millis(1));
-        let mut snd_msgs = Vec::new();
-        let mut recv_msgs = Vec::new();
-        let mut count = 0;
-        loop {
-            tokio::select! {
-                _ = snd_timer.tick() => {
-                    if count >= 10 {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                        break;
-                    }
-                    let sndbuf = "hello".as_bytes().to_vec();
-                    snd_msgs.push(sndbuf.clone());
-                    client_ctx.bidi.write_all(&sndbuf).await.unwrap();
-                    count += 1;
-                }
-                Ok(len) = server_ctx.bidi.read(&mut recvbuf) => {
-                    let recvbuf = recvbuf[..len].to_vec();
-                    recv_msgs.push(recvbuf.clone());
-                    server_ctx.bidi.write_all(&recvbuf).await.unwrap();
-                }
-            }
-        }
-        assert_eq!(snd_msgs, recv_msgs);
-    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_crtl_msg_handling() {
