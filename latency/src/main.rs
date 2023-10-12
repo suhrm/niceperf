@@ -249,7 +249,7 @@ impl CtrlServer {
                 Some(connecting) = self.quinn.server.accept() => {
                     println!("New client connected");
                     let conn = connecting.await?;
-                    let (tx, rx) = conn.open_bi().await?;
+                    let (tx, rx) = conn.accept_bi().await?;
                     println!("New stream opened");
                     self.handle_client(tx, rx).await?;
                 }
@@ -333,7 +333,6 @@ impl TestRunner<NotReady> {
                 let enc_msg = bincode::serialize(&new_test_msg).unwrap();
 
                 self.tx_ctrl.write_all(&enc_msg).await.unwrap();
-                self.tx_ctrl.write_all(&"hallo".as_bytes()).await.unwrap();
                 println!("Sent NewTest message");
 
                 let mut recvbuf = [0u8; 1024];
@@ -343,7 +342,7 @@ impl TestRunner<NotReady> {
                     bincode::deserialize(&recvbuf[..len]).unwrap();
                 match msg {
                     protocol::MessageType::NewTest(..) => {
-                        todo!("NewTest from server when not expecting it")
+                        todo!("Handle NewTest response")
                     }
                     protocol::MessageType::Handshake(_) => {
                         Err(anyhow::anyhow!(
@@ -356,31 +355,33 @@ impl TestRunner<NotReady> {
                 }?;
             }
             Side::Server => {
-                loop {
-                    tokio::select! {
-                        Ok(buffer) = self.rx_ctrl.read_to_end(u16::MAX as usize) => {
-                            println!(" Got {} bytes", buffer.len());
-                            let msg: protocol::MessageType =
-                                bincode::deserialize(&buffer).unwrap();
-                        }
-                    }
-                }
+                let mut recvbuf = [0u8; 1024];
+                let len =
+                    self.rx_ctrl.read(&mut recvbuf).await.unwrap().unwrap();
+                println!("Got {} bytes", len);
+                let msg: protocol::MessageType =
+                    bincode::deserialize(&recvbuf[..len]).unwrap();
+                println!("Got message: {:?}", msg);
+                match msg {
+                    protocol::MessageType::NewTest(id, cfg) => {
+                        let resp =
+                            protocol::MessageType::NewTest(id, cfg.clone());
+                        self.test_cfg = Some(cfg);
+                        let enc_msg = bincode::serialize(&resp).unwrap();
+                        self.tx_ctrl.write_all(&enc_msg).await.unwrap();
+                        
 
-                // println!("Got {} bytes", len);
-                // let msg: protocol::MessageType =
-                //     bincode::deserialize(&recvbuf[..len]).unwrap();
-                // println!("Got message: {:?}", msg);
-                // match msg {
-                //     protocol::MessageType::NewTest(id, cfg) => {
-                //         todo!("NewTest from client when not expecting it")
-                //     }
-                //     protocol::MessageType::Handshake(_) => {
-                //         todo!("Handshake from client when not expecting it")
-                //     }
-                //     protocol::MessageType::Error(_) => {
-                //         Err(anyhow::anyhow!("Error from client"))
-                //     }
-                // }?;
+
+
+                        Ok(())
+                    }
+                    protocol::MessageType::Handshake(_) => {
+                        todo!("Handshake from client when not expecting it")
+                    }
+                    protocol::MessageType::Error(_) => {
+                        Err(anyhow::anyhow!("Error from client"))
+                    }
+                }?;
             }
         }
 
