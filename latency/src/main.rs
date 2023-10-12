@@ -3,11 +3,12 @@
 
 use std::{
     marker::PhantomData,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     time::{Duration, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
+use clap::Parser;
 use common::Logging;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,6 +19,94 @@ mod traits;
 mod utils;
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    let opts = args::Opts::parse();
+
+    match opts.mode {
+        args::Modes::Server(args::Server {
+            listen_addr,
+            listen_port,
+            data_port_range,
+        }) => {
+            let mut server = CtrlServer::new((listen_addr, listen_port).into());
+            server.run().await.unwrap();
+        }
+
+        args::Modes::Client(args) => client(args).await,
+    }
+}
+
+async fn client(args: args::Client) {
+    let config = match args.config_type {
+        args::ConfigType::File { path } => {
+            let config_file = std::fs::File::open(path).unwrap();
+            let config: args::Config =
+                serde_json::from_reader(config_file).unwrap();
+            args::Config {
+                proto: config.proto,
+                common_opts: config.common_opts,
+            }
+        }
+        args::ConfigType::Protocol { proto, common_opts } => {
+            args::Config { proto, common_opts }
+        }
+    };
+
+    let mut client = CtrlClient::new(
+        None,
+        config.common_opts.iface.as_deref(),
+        args.cert_path.as_deref(),
+        (args.dst_addr, args.dst_port).into(),
+    )
+    .await
+    .unwrap();
+    client.run(config).await.unwrap();
+}
+
+struct CtrlClient(quinn::Connection);
+
+impl CtrlClient {
+    pub async fn new(
+        bind_addr: Option<(IpAddr, u16)>,
+        bind_iface: Option<&str>,
+        cert_path: Option<&str>,
+        server_addr: (IpAddr, u16),
+    ) -> Result<Self> {
+        let client = common::QuicClient::new(bind_iface, bind_addr, cert_path)?;
+        let client = client.connect(server_addr).await?;
+        Ok(Self(client))
+    }
+
+    pub async fn run(&mut self, test_cfg: args::Config) -> Result<()> {
+        let (tx, rx) = self.0.open_bi().await?;
+
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let id = self.0.stable_id() as u64;
+        let fut = tokio::spawn(async move {
+            let runner = TestRunner::new(
+                Side::Client,
+                tx,
+                rx,
+                stop_rx,
+                Some(test_cfg),
+                Some(id),
+            );
+            let runner = runner.setup().await?;
+            runner.run().await;
+            Ok::<(), anyhow::Error>(())
+        });
+
+        tokio::select! {
+            _ = fut => {
+                println!("Test finished");
+            }
+            _ = tokio::signal::ctrl_c() => {
+                stop_tx.send(()).unwrap();
+                println!("Test stopped");
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,12 +229,10 @@ impl ClientCtx {
         }
     }
 }
-
 struct CtrlServer {
     quinn: common::QuicServer,
     clients: Vec<ClientCtx>,
 }
-
 impl CtrlServer {
     fn new(lst_addr: SocketAddr) -> Self {
         let quinn =
@@ -160,8 +247,10 @@ impl CtrlServer {
         loop {
             tokio::select! {
                 Some(connecting) = self.quinn.server.accept() => {
+                    println!("New client connected");
                     let conn = connecting.await?;
                     let (tx, rx) = conn.open_bi().await?;
+                    println!("New stream opened");
                     self.handle_client(tx, rx).await?;
                 }
             _ = tokio::signal::ctrl_c() => {
@@ -182,8 +271,7 @@ impl CtrlServer {
         rx: quinn::RecvStream,
     ) -> Result<()> {
         let (stop, stop_rx) = tokio::sync::oneshot::channel();
-        let client =
-            TestRunner::new(Side::Server, tx, rx, stop_rx, 1000, 1000, 1000);
+        let client = TestRunner::new(Side::Server, tx, rx, stop_rx, None, None);
         let fut = tokio::spawn(async move {
             let client = client.setup().await.unwrap();
             client.run().await;
@@ -202,13 +290,11 @@ struct NotReady;
 
 struct TestRunner<State = NotReady> {
     ctx: Vec<ConnCtx>,
-    timeout: u64,
-    interval: u64,
-    packet_size: u64,
+    test_cfg: Option<args::Config>,
     tx_ctrl: quinn::SendStream,
     rx_ctrl: quinn::RecvStream,
     stop: tokio::sync::oneshot::Receiver<()>,
-    id: u64,
+    id: Option<u64>,
     side: Side,
     state: PhantomData<State>,
 }
@@ -219,132 +305,173 @@ impl TestRunner<NotReady> {
         tx_ctrl: quinn::SendStream,
         rx_ctrl: quinn::RecvStream,
         stop: tokio::sync::oneshot::Receiver<()>,
-        timeout: u64,
-        interval: u64,
-        packet_size: u64,
+        test_cfg: Option<args::Config>,
+        id: Option<u64>,
     ) -> Self {
         Self {
             ctx: Vec::new(),
-            timeout,
-            interval,
-            packet_size,
             tx_ctrl,
             rx_ctrl,
             stop,
-            id: 0,
+            id,
             side,
+            test_cfg,
             state: PhantomData,
         }
     }
 
     async fn setup(mut self) -> Result<TestRunner<Ready>> {
         // Do the test setup things
+        println!("Setting up test");
         match self.side {
             Side::Client => {
-                // Send the NewTest request
-                // Wait for the NewTest response
-                // Startup the ClientSide Runner
+                let new_test_msg = protocol::MessageType::NewTest(
+                    self.id.unwrap(),
+                    self.test_cfg.clone().unwrap(),
+                );
+
+                let enc_msg = bincode::serialize(&new_test_msg).unwrap();
+
+                self.tx_ctrl.write_all(&enc_msg).await.unwrap();
+                self.tx_ctrl.write_all(&"hallo".as_bytes()).await.unwrap();
+                println!("Sent NewTest message");
+
+                let mut recvbuf = [0u8; 1024];
+                let len =
+                    self.rx_ctrl.read(&mut recvbuf).await.unwrap().unwrap();
+                let msg: protocol::MessageType =
+                    bincode::deserialize(&recvbuf[..len]).unwrap();
+                match msg {
+                    protocol::MessageType::NewTest(..) => {
+                        todo!("NewTest from server when not expecting it")
+                    }
+                    protocol::MessageType::Handshake(_) => {
+                        Err(anyhow::anyhow!(
+                            "Handshake from server when not expecting it"
+                        ))
+                    }
+                    protocol::MessageType::Error(_) => {
+                        Err(anyhow::anyhow!("Error from server"))
+                    }
+                }?;
             }
             Side::Server => {
-                // Wait for the NewTest request
-                // Startup the ServerSide Runner and reply with the NewTest
-                // response
+                loop {
+                    tokio::select! {
+                        Ok(buffer) = self.rx_ctrl.read_to_end(u16::MAX as usize) => {
+                            println!(" Got {} bytes", buffer.len());
+                            let msg: protocol::MessageType =
+                                bincode::deserialize(&buffer).unwrap();
+                        }
+                    }
+                }
+
+                // println!("Got {} bytes", len);
+                // let msg: protocol::MessageType =
+                //     bincode::deserialize(&recvbuf[..len]).unwrap();
+                // println!("Got message: {:?}", msg);
+                // match msg {
+                //     protocol::MessageType::NewTest(id, cfg) => {
+                //         todo!("NewTest from client when not expecting it")
+                //     }
+                //     protocol::MessageType::Handshake(_) => {
+                //         todo!("Handshake from client when not expecting it")
+                //     }
+                //     protocol::MessageType::Error(_) => {
+                //         Err(anyhow::anyhow!("Error from client"))
+                //     }
+                // }?;
             }
         }
 
-        for _ in 0..self.ctx.len() {
+        let handshake_timeout = std::time::Duration::from_millis(10000);
+
+        for ctx in self.ctx.iter_mut() {
             match self.side {
                 Side::Client => {
-                    self.handshake(
-                        std::time::Duration::from_millis(10000),
-                        Some(std::time::Duration::from_millis(100)),
-                    )
-                    .await?
+                    let handshake =
+                        protocol::MessageType::Handshake(self.id.unwrap());
+                    let handshake_interval =
+                        std::time::Duration::from_millis(100);
+                    let mut handshake_timer =
+                        tokio::time::interval(handshake_interval);
+                    let mut recvbuf = [0u8; 1024];
+                    loop {
+                        tokio::select! {
+                            _ = handshake_timer.tick() => {
+                                let msg = bincode::serialize(&handshake).unwrap();
+                                ctx.bidi.write_all(&msg).await.unwrap();
+                            },
+
+                            _ = tokio::time::sleep(handshake_timeout) => {
+                                return Err(anyhow!("handshake timeout"));
+                            }
+                            Ok(Some(len)) = self.rx_ctrl.read(&mut recvbuf) => {
+                                let recvbuf = recvbuf[..len].to_vec();
+                                let msg: protocol::MessageType = bincode::deserialize(&recvbuf).unwrap();
+                                match msg {
+                                    protocol::MessageType::Handshake(id) => {
+                                        if id == self.id.unwrap() {
+                                            break;
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(anyhow!("unexpected message type"));
+                                    }
+                                }
+                            },
+                        }
+                    }
                 }
                 Side::Server => {
-                    self.handshake(
-                        std::time::Duration::from_millis(10000),
-                        None,
-                    )
-                    .await?
+                    let mut recvbuf = [0u8; u16::MAX as usize];
+                    loop {
+                        tokio::select! {
+                            Ok(Some(len)) = self.rx_ctrl.read(&mut recvbuf) => {
+                                let recvbuf = recvbuf[..len].to_vec();
+                                let msg: protocol::MessageType = bincode::deserialize(&recvbuf).unwrap();
+                                match msg {
+                                    protocol::MessageType::Handshake(id) => {
+                                        let handshake = protocol::MessageType::Handshake(id);
+                                        let msg = bincode::serialize(&handshake).unwrap();
+                                        self.tx_ctrl.write_all(&msg).await.unwrap();
+                                    }
+                                    _ => {
+                                        return Err(anyhow!("unexpected message type"));
+                                    }
+
+                                }
+                            },
+                            _ = tokio::time::sleep(handshake_timeout) => {
+                                return Err(anyhow!("handshake timeout"));
+                            }
+                        }
+                    }
                 }
             }
         }
-
+        assert!(self.test_cfg.is_some());
         Ok(TestRunner::<Ready> {
             ctx: self.ctx,
-            timeout: self.timeout,
-            interval: self.interval,
-            packet_size: self.packet_size,
             tx_ctrl: self.tx_ctrl,
             rx_ctrl: self.rx_ctrl,
             stop: self.stop,
             id: self.id,
             side: self.side,
+            test_cfg: self.test_cfg,
             state: PhantomData,
         })
-    }
-
-    async fn handshake(
-        &mut self,
-        timeout: Duration,
-        interval: Option<Duration>,
-    ) -> Result<()> {
-        let handshake = protocol::MessageType::Handshake(self.id as u64);
-
-        match self.side {
-            Side::Client => {
-                let mut handshake_timer =
-                    tokio::time::interval(interval.unwrap());
-                loop {
-                    tokio::select! {
-                        _ = handshake_timer.tick() => {
-                            let msg = bincode::serialize(&handshake).unwrap();
-                            for ctx in self.ctx.iter_mut() {
-                                ctx.bidi.write_all(&msg).await.unwrap();
-                            }
-                        },
-
-                        _ = tokio::time::sleep(timeout) => {
-                            return Err(anyhow!("handshake timeout"));
-                        }
-                    }
-                }
-            }
-            Side::Server => {
-                let mut recvbuf = [0u8; u16::MAX as usize];
-                loop {
-                    tokio::select! {
-                        Ok(Some(len)) = self.rx_ctrl.read(&mut recvbuf) => {
-                            let recvbuf = recvbuf[..len].to_vec();
-                            let msg: protocol::MessageType = bincode::deserialize(&recvbuf).unwrap();
-                            match msg {
-                                protocol::MessageType::Handshake(id) => {
-                                    self.id = id;
-                                    break;
-                                }
-                                _ => {
-                                    return Err(anyhow!("unexpected message type"));
-                                }
-                            }
-                        },
-                        _ = tokio::time::sleep(timeout) => {
-                            return Err(anyhow!("handshake timeout"));
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 }
 
 impl TestRunner<Ready> {
     async fn run(mut self) {
-        let mut snd_timer =
-            tokio::time::interval(Duration::from_millis(self.interval));
-        let packet_size = self.packet_size;
-        assert!(packet_size <= u16::MAX as u64);
+        let cfg = self.test_cfg.take().unwrap();
+        let mut snd_timer = tokio::time::interval(Duration::from_millis(
+            cfg.common_opts.interval.unwrap(),
+        ));
+        let packet_size = cfg.common_opts.len.unwrap();
+        assert!(packet_size <= u16::MAX as usize);
         let mut sndbuf = [0u8; u16::MAX as usize];
         let mut recvbuf = [0u8; u16::MAX as usize];
 
@@ -361,12 +488,6 @@ impl TestRunner<Ready> {
                     self.handle_msg(&recvbuf).await;
                 }
 
-                _ = tokio::time::sleep(Duration::from_millis(self.timeout)) => {
-                    for ctx in self.ctx.iter_mut() {
-                        ctx.stop.take().unwrap().send(()).unwrap();
-                    }
-                    break;
-                }
                 _ = &mut self.stop => {
                     for ctx in self.ctx.iter_mut() {
                         ctx.stop.take().unwrap().send(()).unwrap();
@@ -378,7 +499,27 @@ impl TestRunner<Ready> {
         }
     }
 }
-impl<State> TestRunner<State> {
+impl TestRunner<NotReady> {
+    async fn handle_msg(&mut self, msg: &[u8]) -> Result<()> {
+        let msg = bincode::deserialize::<protocol::MessageType>(msg).unwrap();
+        match self.side {
+            Side::Client => {
+                match msg {
+                    protocol::MessageType::Handshake(_) => Ok(()),
+                    protocol::MessageType::NewTest(id, config) => {
+                        todo!()
+                    }
+                    protocol::MessageType::Error(err) => {
+                        Err(anyhow!("Got err from server"))?
+                    }
+                }
+            }
+            Side::Server => todo!(),
+        }
+    }
+}
+
+impl TestRunner<Ready> {
     async fn handle_msg(&mut self, msg: &[u8]) -> Result<()> {
         let msg = bincode::deserialize::<protocol::MessageType>(msg).unwrap();
         match self.side {
