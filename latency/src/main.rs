@@ -90,9 +90,8 @@ impl CtrlClient {
                 Some(test_cfg),
                 Some(id),
             );
-            let runner = runner.setup().await?;
+            let runner = runner.setup().await.unwrap();
             runner.run().await;
-            Ok::<(), anyhow::Error>(())
         });
 
         tokio::select! {
@@ -156,12 +155,8 @@ pub struct UdpLatency<Kind> {
     kind: std::marker::PhantomData<Kind>,
 }
 impl UdpLatency<socket_kind::Server> {
-    pub fn new(local: &str) -> Self {
-        let local: SocketAddr = local.parse().unwrap();
-
-        let socket =
-            common::UDPSocket::new(None, Some((local.ip(), local.port())))
-                .unwrap();
+    pub fn new(local: (IpAddr, u16)) -> Self {
+        let socket = common::UDPSocket::new(None, Some(local)).unwrap();
 
         let inner = tokio::net::UdpSocket::from_std(
             socket.get_ref().try_clone().unwrap().into(),
@@ -177,8 +172,8 @@ impl UdpLatency<socket_kind::Server> {
 }
 
 impl UdpLatency<socket_kind::Client> {
-    pub fn new(remote: &str) -> Self {
-        let remote = remote.parse().unwrap();
+    pub fn new(remote: (IpAddr, u16)) -> Self {
+        let remote = remote.into();
         let socket = common::UDPSocket::new(None, None).unwrap();
         let inner = tokio::net::UdpSocket::from_std(
             socket.get_ref().try_clone().unwrap().into(),
@@ -340,9 +335,35 @@ impl TestRunner<NotReady> {
                     self.rx_ctrl.read(&mut recvbuf).await.unwrap().unwrap();
                 let msg: protocol::MessageType =
                     bincode::deserialize(&recvbuf[..len]).unwrap();
+                println!("Received {:?}", &msg);
                 match msg {
-                    protocol::MessageType::NewTest(..) => {
-                        todo!("Handle NewTest response")
+                    protocol::MessageType::NewTest(_id, cfg) => {
+                        let proto = cfg.proto;
+                        match proto {
+                            args::ProtocolType::Tcp(_) => todo!(),
+                            args::ProtocolType::Udp(udpopts) => {
+                                let (p1, p2) = tokio::io::duplex(
+                                    cfg.common_opts.len.unwrap(),
+                                );
+                                let (stop, stop_rx) =
+                                    tokio::sync::oneshot::channel();
+                                let ctx = ConnCtx::new(p1, stop);
+                                let socket =
+                                    UdpLatency::<socket_kind::Client>::new((
+                                        udpopts.dst_addr,
+                                        udpopts.dst_port,
+                                    ));
+                                let mut conn_runner =
+                                    ConnRunner::new(socket, p2, stop_rx);
+                                tokio::spawn(async move {
+                                    conn_runner.run().await;
+                                });
+                                self.ctx.push(ctx);
+                            }
+                            args::ProtocolType::Quic(_) => todo!(),
+                        }
+
+                        Ok(())
                     }
                     protocol::MessageType::Handshake(_) => {
                         Err(anyhow::anyhow!(
@@ -366,12 +387,33 @@ impl TestRunner<NotReady> {
                     protocol::MessageType::NewTest(id, cfg) => {
                         let resp =
                             protocol::MessageType::NewTest(id, cfg.clone());
-                        self.test_cfg = Some(cfg);
+                        self.test_cfg = Some(cfg.clone());
                         let enc_msg = bincode::serialize(&resp).unwrap();
                         self.tx_ctrl.write_all(&enc_msg).await.unwrap();
-                        
 
-
+                        match cfg.proto {
+                            args::ProtocolType::Tcp(_) => todo!(),
+                            args::ProtocolType::Udp(udpopts) => {
+                                let (p1, p2) = tokio::io::duplex(
+                                    cfg.common_opts.len.unwrap(),
+                                );
+                                let (stop, stop_rx) =
+                                    tokio::sync::oneshot::channel();
+                                let ctx = ConnCtx::new(p1, stop);
+                                let socket =
+                                    UdpLatency::<socket_kind::Server>::new((
+                                        udpopts.dst_addr,
+                                        udpopts.dst_port,
+                                    ));
+                                let mut conn_runner =
+                                    ConnRunner::new(socket, p2, stop_rx);
+                                tokio::spawn(async move {
+                                    conn_runner.run().await;
+                                });
+                                self.ctx.push(ctx);
+                            }
+                            args::ProtocolType::Quic(_) => todo!(),
+                        }
 
                         Ok(())
                     }
@@ -408,6 +450,7 @@ impl TestRunner<NotReady> {
                                 return Err(anyhow!("handshake timeout"));
                             }
                             Ok(Some(len)) = self.rx_ctrl.read(&mut recvbuf) => {
+                                println!("Client Received {} bytes", len);
                                 let recvbuf = recvbuf[..len].to_vec();
                                 let msg: protocol::MessageType = bincode::deserialize(&recvbuf).unwrap();
                                 match msg {
@@ -428,14 +471,18 @@ impl TestRunner<NotReady> {
                     let mut recvbuf = [0u8; u16::MAX as usize];
                     loop {
                         tokio::select! {
-                            Ok(Some(len)) = self.rx_ctrl.read(&mut recvbuf) => {
+                            Ok(len) = ctx.bidi.read(&mut recvbuf) => {
+                                println!("Server Received {} bytes", len);
                                 let recvbuf = recvbuf[..len].to_vec();
-                                let msg: protocol::MessageType = bincode::deserialize(&recvbuf).unwrap();
+                                let msg = bincode::deserialize::<protocol::MessageType>(&recvbuf);
+                                let msg = msg.unwrap();
+
                                 match msg {
                                     protocol::MessageType::Handshake(id) => {
                                         let handshake = protocol::MessageType::Handshake(id);
                                         let msg = bincode::serialize(&handshake).unwrap();
                                         self.tx_ctrl.write_all(&msg).await.unwrap();
+                                        break;
                                     }
                                     _ => {
                                         return Err(anyhow!("unexpected message type"));
@@ -451,6 +498,7 @@ impl TestRunner<NotReady> {
                 }
             }
         }
+        println!("Handshake complete, starting test");
         assert!(self.test_cfg.is_some());
         Ok(TestRunner::<Ready> {
             ctx: self.ctx,
@@ -467,6 +515,8 @@ impl TestRunner<NotReady> {
 
 impl TestRunner<Ready> {
     async fn run(mut self) {
+        println!("Starting test");
+        println!("Test config: {:?}", self.test_cfg);
         let cfg = self.test_cfg.take().unwrap();
         let mut snd_timer = tokio::time::interval(Duration::from_millis(
             cfg.common_opts.interval.unwrap(),
@@ -477,10 +527,12 @@ impl TestRunner<Ready> {
         let mut recvbuf = [0u8; u16::MAX as usize];
 
         loop {
+            println!("Waiting for timer");
             tokio::select! {
                 _ = snd_timer.tick() => {
                     let sndbuf = sndbuf[..packet_size as usize].to_vec();
                     for ctx in self.ctx.iter_mut() {
+                        println!("Sending {} bytes", sndbuf.len());
                         ctx.bidi.write_all(&sndbuf).await.unwrap();
                     }
                 }
