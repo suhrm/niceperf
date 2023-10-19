@@ -798,7 +798,7 @@ pub trait Logging {
 use tokio::{fs::File, io::AsyncWriteExt};
 
 pub struct Logger<T> {
-    logger: tokio::fs::File,
+    logger: tokio::io::BufWriter<File>,
     _marker: std::marker::PhantomData<T>,
 }
 /// A simple logger that logs to a file the CSV representation of the
@@ -813,7 +813,7 @@ impl<T: Logging + std::fmt::Display + Default> Logger<T> {
         logger.write_all(logging_header.as_bytes())?;
         let logger = File::from_std(logger);
         Ok(Logger {
-            logger,
+            logger: tokio::io::BufWriter::new(logger),
             _marker: std::marker::PhantomData,
         })
     }
