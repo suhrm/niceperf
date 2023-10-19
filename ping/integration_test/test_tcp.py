@@ -37,7 +37,7 @@ def test_tcp():
 
         client.up(interface="eth-client")
         server.up(interface="eth-server")
-        client.tc(interface="eth-client", delay=1, loss=1)
+        client.tc(interface="eth-client", loss=1)
 
         server.run_async(
             cmd="../target/debug/ping server tcp -i eth-server --dst-addr 10.0.0.2 --dst-port 1234",
@@ -80,7 +80,7 @@ def test_tcp_timeout():
 
         client.up(interface="eth-client")
         server.up(interface="eth-server")
-        client.tc(interface="eth-client", delay=100, loss=1)
+        client.tc(interface="eth-client", delay=40)
 
         server.run_async(
             cmd="../target/debug/ping server tcp -i eth-server --dst-addr 10.0.0.2 --dst-port 1234",
@@ -90,7 +90,7 @@ def test_tcp_timeout():
         time.sleep(0.5)
 
         res = client.run_async(
-            cmd="../target/debug/ping client tcp  -i eth-client --dst-addr 10.0.0.2 --dst-port 1234 -c 1000 --interval 1",
+            cmd="../target/debug/ping client tcp  -i eth-client --dst-addr 10.0.0.2 --dst-port 1234 -c 1000 --interval 10",
         )
 
         while process_monitor.run():

@@ -1,18 +1,12 @@
 use std::net::IpAddr;
-
 use anyhow::Result;
-#[derive(Debug)]
-pub enum ConnState {
-    Connected,
-    Disconnected,
-}
 
+#[derive(Debug)]
 #[derive(Debug)]
 pub struct ConnCtx {
     tx: tokio::sync::broadcast::Sender<Vec<u8>>,
     rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
-    state: ConnState,
 }
 
 impl ConnCtx {
@@ -25,7 +19,6 @@ impl ConnCtx {
             tx,
             rx,
             stop: Some(stop),
-            state: ConnState::Connected,
         }
     }
 
@@ -108,6 +101,7 @@ pub struct UdpLatency<Kind> {
 }
 impl UdpLatency<socket_kind::Server> {
     pub fn new(local: (IpAddr, u16)) -> Self {
+        // TODO: populate rest of the options at some point.
         let socket = common::UDPSocket::new(None, Some(local)).unwrap();
 
         let inner = tokio::net::UdpSocket::from_std(

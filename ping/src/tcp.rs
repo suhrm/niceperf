@@ -139,7 +139,7 @@ impl TCPClient {
                             println!("Timeout started waiting for {} packets", self.common.count.unwrap() - recv_counter);
                             timeout_started = true;
                             let stop = send_stop.clone();
-                            tokio::spawn( async move {
+                            tokio::spawn(async move {
                                 tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
                                 let _ = stop.send(()).await;
                             });
