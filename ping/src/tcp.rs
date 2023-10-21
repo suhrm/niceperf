@@ -276,8 +276,7 @@ impl TCPServer {
         let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
         let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
         loop {
-            let next_frame = f_reader.next().await;
-            if let Some(Ok(frame)) = next_frame {
+            if let Some(Ok(frame)) = f_reader.next().await {
                 let recv_timestamp = SystemTime::now()
                     .duration_since(UNIX_EPOCH)?
                     .as_nanos() as u128;
