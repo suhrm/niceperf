@@ -2,7 +2,6 @@ use std::net::IpAddr;
 use anyhow::Result;
 
 #[derive(Debug)]
-#[derive(Debug)]
 pub struct ConnCtx {
     tx: tokio::sync::broadcast::Sender<Vec<u8>>,
     rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
