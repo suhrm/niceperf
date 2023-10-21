@@ -21,7 +21,7 @@ use crate::{
 };
 
 pub struct TCPClient {
-    socket: TokioTcpStream,
+    socket: common::TCPSocket,
     common: args::CommonOpts,
     src_addr: IpAddr,
     dst_addr: IpAddr,
@@ -51,9 +51,6 @@ impl TCPClient {
         println!("Trying to connect to {}...", dst_addr);
         socket.connect(SocketAddr::new(dst_addr, dst_port))?;
         println!("Connected to {}", dst_addr);
-        let socket = TokioTcpStream::from_std(
-            socket.get_ref().try_clone()?.try_into()?,
-        )?;
 
         let logger = match args.common_opts.file.clone() {
             Some(file_name) => Some(Logger::new(file_name)?),
@@ -116,43 +113,62 @@ impl TCPClient {
             recv_timestamp: 0,
             payload: vec![0u8; self.common.len.unwrap() as usize],
         };
+        let mut socket = TokioTcpStream::from_std(
+            self.socket.get_ref().try_clone()?.try_into()?,
+        )?;
         // Convert to framed readers and writers as TCP is a streaming protocol
-        let (rx, tx) = self.socket.split();
+        let (rx, tx) = socket.into_split();
         let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
         let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
 
         // Recv counter
         let mut recv_counter = 0;
-        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel(1);
+        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel::<()>(1);
         let mut timeout_started = false;
+        tokio::spawn(async move {
+            let mut internal_couter = 0;
+            loop {
+                pacing_timer.tick().await;
+                payload.seq = internal_couter;
+                payload.send_timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+                    as u128;
+                let encoded_packet = bincode::serialize(&payload).unwrap();
+
+                f_writer.send(encoded_packet.into()).await.unwrap();
+                internal_couter += 1;
+            }
+        });
 
         loop {
             tokio::select! {
-                _ = pacing_timer.tick() => {
-                    if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
-                        if (recv_counter as u128) >= self.common.count.unwrap() as u128 {
-                            break;
-                        }
-                        else if !timeout_started {
-                            println!("Timeout started waiting for {} packets", self.common.count.unwrap() - recv_counter);
-                            timeout_started = true;
-                            let stop = send_stop.clone();
-                            tokio::spawn(async move {
-                                tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
-                                let _ = stop.send(()).await;
-                            });
-                        }
-                        continue;
-
-
-                    }
-                    payload.seq = self.internal_couter;
-                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
-                    let encoded_packet = bincode::serialize(&payload)?;
-
-                    f_writer.send(encoded_packet.into()).await?;
-                    self.internal_couter += 1;
-                }
+                // _ = pacing_timer.tick() => {
+                //     // if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
+                //     //     if (recv_counter as u128) >= self.common.count.unwrap() as u128 {
+                //     //         break;
+                //     //     }
+                //     //     else if !timeout_started {
+                //     //         println!("Timeout started waiting for {} packets", self.common.count.unwrap() - recv_counter);
+                //     //         timeout_started = true;
+                //     //         let stop = send_stop.clone();
+                //     //         tokio::spawn(async move {
+                //     //             tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
+                //     //             let _ = stop.send(()).await;
+                //     //         });
+                //     //     }
+                //     //     continue;
+                //     //
+                //     //
+                //     // }
+                //     payload.seq = self.internal_couter;
+                //     payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
+                //     let encoded_packet = bincode::serialize(&payload)?;
+                //
+                //     f_writer.send(encoded_packet.into()).await?;
+                //     self.internal_couter += 1;
+                // }
                 Some(Ok(frame)) = f_reader.next() => {
                     let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
                     let decoded_packet: TcpEchoPacket = bincode::deserialize(&frame)?;
