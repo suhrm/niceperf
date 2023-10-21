@@ -103,8 +103,6 @@ impl TCPClient {
             self.common.preload.unwrap()
         );
         // TODO: Add support for timeout
-        let _timeout_tracker =
-            tokio::time::interval(std::time::Duration::from_millis(10 * 1000));
         let mut pacing_timer = tokio::time::interval(
             std::time::Duration::from_millis(self.common.interval.unwrap()),
         );
@@ -174,12 +172,12 @@ impl TCPClient {
                         size: frame.len(),
                     };
                     self.rtt_stats.update(rtt);
-                    if let Some(logger) = &mut self.logger {
-                        logger.log(&result).await?;
-                    }
-                    else {
-                        println!("{} bytes from {}: tcp_pay_seq={} time={:.3} ms", frame.len(), result.src_addr, result.seq, result.rtt);
-                    }
+                    // if let Some(logger) = &mut self.logger {
+                    //     logger.log(&result).await?;
+                    // }
+                    // else {
+                    //     println!("{} bytes from {}: tcp_pay_seq={} time={:.3} ms", frame.len(), result.src_addr, result.seq, result.rtt);
+                    // }
                 },
                 _ = recv_stop.recv() => {
                     println!("wait for 10 seconds to receive all the packets");
