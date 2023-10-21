@@ -260,20 +260,16 @@ impl TCPServer {
         let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
         let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
         loop {
-            tokio::select! {
-            next_frame = f_reader.next() => {
-                if let Some(Ok(frame)) = next_frame {
-                let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
-                let mut decoded_packet: TcpEchoPacket = bincode::deserialize(&frame)?;
+            let next_frame = f_reader.next().await;
+            if let Some(Ok(frame)) = next_frame {
+                let recv_timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)?
+                    .as_nanos() as u128;
+                let mut decoded_packet: TcpEchoPacket =
+                    bincode::deserialize(&frame)?;
                 decoded_packet.recv_timestamp = recv_timestamp;
                 let encoded_packet = bincode::serialize(&decoded_packet)?;
                 f_writer.send(encoded_packet.into()).await?;
-
-                }
-                else {
-                    break;
-                }
-            }
             }
         }
         Ok(())
