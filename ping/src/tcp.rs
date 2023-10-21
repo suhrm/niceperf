@@ -176,17 +176,17 @@ impl TCPClient {
                     let seq = decoded_packet.seq;
                     let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
                     recv_counter += 1;
-                    let result = TCPEchoResult {
-                        seq,
-                        rtt,
-                        send_timestamp,
-                        recv_timestamp,
-                        server_timestamp: decoded_packet.recv_timestamp,
-                        src_addr : src_addr.to_string(),
-                        dst_addr : dst_addr.to_string(),
-                        cc: self.cc.clone(),
-                        size: frame.len(),
-                    };
+                    // let result = TCPEchoResult {
+                    //     seq,
+                    //     rtt,
+                    //     send_timestamp,
+                    //     recv_timestamp,
+                    //     server_timestamp: decoded_packet.recv_timestamp,
+                    //     src_addr : src_addr.to_string(),
+                    //     dst_addr : dst_addr.to_string(),
+                    //     cc: self.cc.clone(),
+                    //     size: frame.len(),
+                    // };
                     self.rtt_stats.update(rtt);
                     // if let Some(logger) = &mut self.logger {
                     //     logger.log(&result).await?;

@@ -2,10 +2,11 @@ use clap::Parser;
 mod args;
 mod icmp;
 mod logger;
+mod non_async;
 mod tcp;
 mod udp;
 use anyhow::Result;
-#[tokio::main()]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     console_subscriber::init();
     let args = args::Opts::parse();
@@ -14,10 +15,7 @@ async fn main() -> Result<()> {
             match proto {
                 args::Protocol::Tcp(opts) => {
                     let mut client = tcp::TCPClient::new(opts)?;
-                    tokio::spawn(async move {
-                        client.run().await?;
-                        Ok::<(), anyhow::Error>(())
-                    }).await?;
+                    client.run().await?;
                 }
                 args::Protocol::Udp(opts) => {
                     let mut client = udp::UDPClient::new(opts)?;
