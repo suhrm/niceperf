@@ -286,6 +286,9 @@ impl TCPServer {
                     println!("buffer: {:?}", buffer);
                     tx.write_all(&buffer).await?;
                 },
+                else => {
+                    break;
+                }
 
             }
         }
