@@ -172,31 +172,31 @@ impl TCPClient {
                 // }
                 Ok(len) = rx.read_u16() => {
                     let mut frame = vec![0u8; len as usize];
-                    rx.read_exact(&mut frame).await?;
+                    rx.read_exact(&mut frame).await.unwrap();
                     let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
-                    let decoded_packet: TcpEchoPacket = bincode::deserialize(&frame)?;
+                    let decoded_packet: TcpEchoPacket = bincode::deserialize(&frame).unwrap();
                     let send_timestamp = decoded_packet.send_timestamp;
                     let seq = decoded_packet.seq;
                     let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
                     recv_counter += 1;
-                    // let result = TCPEchoResult {
-                    //     seq,
-                    //     rtt,
-                    //     send_timestamp,
-                    //     recv_timestamp,
-                    //     server_timestamp: decoded_packet.recv_timestamp,
-                    //     src_addr : src_addr.to_string(),
-                    //     dst_addr : dst_addr.to_string(),
-                    //     cc: self.cc.clone(),
-                    //     size: frame.len(),
-                    // };
+                    let result = TCPEchoResult {
+                        seq,
+                        rtt,
+                        send_timestamp,
+                        recv_timestamp,
+                        server_timestamp: decoded_packet.recv_timestamp,
+                        src_addr : src_addr.to_string(),
+                        dst_addr : dst_addr.to_string(),
+                        cc: self.cc.clone(),
+                        size: len as usize,
+                    };
                     self.rtt_stats.update(rtt);
-                    // if let Some(logger) = &mut self.logger {
-                    //     logger.log(&result).await?;
-                    // }
-                    // else {
-                    //     println!("{} bytes from {}: tcp_pay_seq={} time={:.3} ms", frame.len(), result.src_addr, result.seq, result.rtt);
-                    // }
+                    if let Some(logger) = &mut self.logger {
+                        logger.log(&result).await?;
+                    }
+                    else {
+                        println!("{} bytes from {}: tcp_pay_seq={} time={:.3} ms", frame.len(), result.src_addr, result.seq, result.rtt);
+                    }
                 },
                 _ = recv_stop.recv() => {
                     println!("wait for 10 seconds to receive all the packets");
@@ -283,8 +283,13 @@ impl TCPServer {
             tokio::select! {
                 Ok(len) = rx.read_u16() => {
                     rx.read_exact(&mut buffer[..len as usize]).await?;
+                    let mut decoded_packet: TcpEchoPacket = bincode::deserialize(&buffer).unwrap();
+                    let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
+                    decoded_packet.recv_timestamp = recv_timestamp;
+                    let encoded_packet = bincode::serialize(&decoded_packet)?;
+                    let len = encoded_packet.len() as u16;
                     tx.write_u16(len).await?;
-                    tx.write_all(&buffer).await?;
+                    tx.write_all(&encoded_packet).await?;
                 },
                 else => {
                     break;
