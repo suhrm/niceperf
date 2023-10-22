@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
@@ -30,7 +30,7 @@ pub struct TCPClient {
     identifier: u16,
     src_port: Option<u16>,
     dst_port: u16,
-    logger: Option<Logger<TCPEchoResult>>,
+    logger: Option<String>,
     cc: String,
     rtt_stats: Statistics,
 }
@@ -53,21 +53,16 @@ impl TCPClient {
         socket.connect(SocketAddr::new(dst_addr, dst_port))?;
         println!("Connected to {}", dst_addr);
 
-        let logger = match args.common_opts.file.clone() {
-            Some(file_name) => Some(Logger::new(file_name)?),
-            None => None,
-        };
-
         Ok(TCPClient {
             socket,
-            common: args.common_opts,
             src_addr,
             dst_addr,
             internal_couter: 0,
             identifier: rand::random::<u16>(),
             src_port: None,
             dst_port,
-            logger,
+            logger: args.common_opts.file.clone(),
+            common: args.common_opts,
             // Safety we have a default value
             cc: args.cc.unwrap(),
             rtt_stats: Statistics::new(),
@@ -124,63 +119,66 @@ impl TCPClient {
         let mut recv_counter = 0;
         let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel::<()>(1);
         let mut timeout_started = false;
+        let interval = self.common.interval.unwrap();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let mut pacing_timer = tokio::time::interval(
+                std::time::Duration::from_millis(interval),
+            );
+            let mut internal_couter = 0;
+            loop {
+                _ = pacing_timer.tick().await;
+                payload.seq = internal_couter;
+                payload.send_timestamp =
+                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+                        as u128;
+                let encoded_packet = bincode::serialize(&payload)?;
+                let len = encoded_packet.len() as u16;
+                tx.write_u16(len).await?;
+                tx.write_all(&encoded_packet).await?;
+                internal_couter += 1;
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+        let cc = self.cc.clone();
+        let file_name = self.logger.clone();
+        tokio::spawn(async move {
+            let mut stats = Statistics::new();
 
+            let mut len = 0;
+            loop {
+                let len = rx.read_u16().await?;
+                let mut frame = vec![0u8; len as usize];
+                rx.read_exact(&mut frame).await?;
+                let recv_timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)?
+                    .as_nanos() as u128;
+                let decoded_packet: TcpEchoPacket =
+                    bincode::deserialize(&frame).unwrap();
+                let send_timestamp = decoded_packet.send_timestamp;
+                let seq = decoded_packet.seq;
+                let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
+                recv_counter += 1;
+                let result = TCPEchoResult {
+                    seq,
+                    rtt,
+                    send_timestamp,
+                    recv_timestamp,
+                    server_timestamp: decoded_packet.recv_timestamp,
+                    src_addr: src_addr.to_string(),
+                    dst_addr: dst_addr.to_string(),
+                    cc: cc.clone(),
+                    size: len as usize,
+                };
+                stats.update(rtt);
+                if recv_counter % 100 == 0 {
+                    println!("{}", stats);
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        });
         loop {
             tokio::select! {
-                _ = pacing_timer.tick() => {
-                    if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
-                        if (recv_counter as u128) >= self.common.count.unwrap() as u128 {
-                            break;
-                        }
-                        else if !timeout_started {
-                            println!("Timeout started waiting for {} packets", self.common.count.unwrap() - recv_counter);
-                            timeout_started = true;
-                            let stop = send_stop.clone();
-                            tokio::spawn(async move {
-                                tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
-                                let _ = stop.send(()).await;
-                            });
-                        }
-                        continue;
-
-
-                    }
-                    payload.seq = self.internal_couter;
-                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
-                    let encoded_packet = bincode::serialize(&payload)?;
-                    let len = encoded_packet.len() as u16;
-                    tx.write_u16(len).await?;
-                    tx.write_all(&encoded_packet).await?;
-                    self.internal_couter += 1;
-                }
-                Ok(len) = rx.read_u16() => {
-                    let mut frame = vec![0u8; len as usize];
-                    rx.read_exact(&mut frame).await?;
-                    let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
-                    let decoded_packet: TcpEchoPacket = bincode::deserialize(&frame).unwrap();
-                    let send_timestamp = decoded_packet.send_timestamp;
-                    let seq = decoded_packet.seq;
-                    let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
-                    recv_counter += 1;
-                    let result = TCPEchoResult {
-                        seq,
-                        rtt,
-                        send_timestamp,
-                        recv_timestamp,
-                        server_timestamp: decoded_packet.recv_timestamp,
-                        src_addr : src_addr.to_string(),
-                        dst_addr : dst_addr.to_string(),
-                        cc: self.cc.clone(),
-                        size: len as usize,
-                    };
-                    self.rtt_stats.update(rtt);
-                    if let Some(logger) = &mut self.logger {
-                        logger.log(&result).await?;
-                    }
-                    else {
-                        println!("{} bytes from {}: tcp_pay_seq={} time={:.3} ms", frame.len(), result.src_addr, result.seq, result.rtt);
-                    }
-                },
                 _ = recv_stop.recv() => {
                     println!("wait for 10 seconds to receive all the packets");
                     break;
@@ -193,7 +191,6 @@ impl TCPClient {
 
             }
         }
-        println!("Statictics {}", self.rtt_stats);
         Ok(())
     }
 }
@@ -261,22 +258,18 @@ impl TCPServer {
         let (mut rx, mut tx) = stream.split();
         let mut buffer = [0u8; u16::MAX as usize];
         loop {
-            tokio::select! {
-                Ok(len) = rx.read_u16() => {
-                    rx.read_exact(&mut buffer[..len as usize]).await?;
-                    let mut decoded_packet: TcpEchoPacket = bincode::deserialize(&buffer).unwrap();
-                    let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
-                    decoded_packet.recv_timestamp = recv_timestamp;
-                    let encoded_packet = bincode::serialize(&decoded_packet)?;
-                    let len = encoded_packet.len() as u16;
-                    tx.write_u16(len).await?;
-                    tx.write_all(&encoded_packet).await?;
-                },
-                else => {
-                    break;
-                }
-
-            }
+            let len = rx.read_u16().await?;
+            rx.read_exact(&mut buffer[..len as usize]).await?;
+            let mut decoded_packet: TcpEchoPacket =
+                bincode::deserialize(&buffer).unwrap();
+            let recv_timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)?
+                .as_nanos() as u128;
+            decoded_packet.recv_timestamp = recv_timestamp;
+            let encoded_packet = bincode::serialize(&decoded_packet)?;
+            let len = encoded_packet.len() as u16;
+            tx.write_u16(len).await?;
+            tx.write_all(&encoded_packet).await?;
         }
         Ok(())
     }
