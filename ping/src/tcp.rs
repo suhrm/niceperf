@@ -282,9 +282,8 @@ impl TCPServer {
         loop {
             tokio::select! {
                 Ok(len) = rx.read_u16() => {
-                    panic!("len: {}", len);
                     rx.read_exact(&mut buffer[..len as usize]).await?;
-                    println!("buffer: {:?}", buffer);
+                    tx.write_u16(len).await?;
                     tx.write_all(&buffer).await?;
                 },
                 else => {
