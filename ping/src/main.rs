@@ -8,7 +8,7 @@ mod udp;
 use anyhow::Result;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    // console_subscriber::init();
+    console_subscriber::init();
     let args = args::Opts::parse();
     match args.mode {
         args::Modes::Client { proto } => {
