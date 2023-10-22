@@ -17,7 +17,8 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Setup
-      run: cargo install cargo-limit
+    - run: rustup update && rustup default nightly
+    - run: cargo install cargo-limit
     - name: Build
       run: cargo lbuild
     - name: Run tests
