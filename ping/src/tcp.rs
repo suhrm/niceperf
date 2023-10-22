@@ -10,6 +10,7 @@ use common::{interface_to_ipaddr, Logger, Statistics, TCPSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream},
     signal,
 };
@@ -117,9 +118,7 @@ impl TCPClient {
             self.socket.get_ref().try_clone()?.try_into()?,
         )?;
         // Convert to framed readers and writers as TCP is a streaming protocol
-        let (rx, tx) = socket.into_split();
-        let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
-        let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        let (mut rx, mut tx) = socket.into_split();
 
         // Recv counter
         let mut recv_counter = 0;
@@ -136,8 +135,10 @@ impl TCPClient {
                     .as_nanos()
                     as u128;
                 let encoded_packet = bincode::serialize(&payload).unwrap();
+                let len = encoded_packet.len() as u16;
 
-                f_writer.send(encoded_packet.into()).await.unwrap();
+                tx.write_u16(len).await.unwrap();
+                tx.write_all(&encoded_packet).await.unwrap();
                 internal_couter += 1;
             }
         });
@@ -169,7 +170,9 @@ impl TCPClient {
                 //     f_writer.send(encoded_packet.into()).await?;
                 //     self.internal_couter += 1;
                 // }
-                Some(Ok(frame)) = f_reader.next() => {
+                Ok(len) = rx.read_u16() => {
+                    let mut frame = vec![0u8; len as usize];
+                    rx.read_exact(&mut frame).await?;
                     let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
                     let decoded_packet: TcpEchoPacket = bincode::deserialize(&frame)?;
                     let send_timestamp = decoded_packet.send_timestamp;
@@ -272,19 +275,18 @@ impl TCPServer {
     }
 
     pub async fn client_handler(mut stream: TokioTcpStream) -> Result<()> {
-        let (rx, tx) = stream.split();
-        let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
-        let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        let (mut rx, mut tx) = stream.split();
+        // let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
+        // let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        let mut buffer = [0u8; u16::MAX as usize];
         loop {
-            if let Some(Ok(frame)) = f_reader.next().await {
-                let recv_timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)?
-                    .as_nanos() as u128;
-                let mut decoded_packet: TcpEchoPacket =
-                    bincode::deserialize(&frame)?;
-                decoded_packet.recv_timestamp = recv_timestamp;
-                let encoded_packet = bincode::serialize(&decoded_packet)?;
-                f_writer.send(encoded_packet.into()).await?;
+            tokio::select! {
+                Ok(len) = rx.read_u16() => {
+                    rx.read_exact(&mut buffer[..len as usize]).await?;
+                    println!("buffer: {:?}", buffer);
+                    tx.write_all(&buffer).await?;
+                },
+
             }
         }
         Ok(())
