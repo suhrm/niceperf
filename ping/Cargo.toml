@@ -21,3 +21,4 @@ futures = "*"
 futures-util = "*"
 ctor = {}
 console-subscriber = "0.2.0"
+polling = "3.2.0"
