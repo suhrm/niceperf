@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use clap::Parser;
 mod args;
 mod icmp;
@@ -6,16 +8,20 @@ mod non_async;
 mod tcp;
 mod udp;
 use anyhow::Result;
+use tokio::task;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    console_subscriber::init();
     let args = args::Opts::parse();
+    let local = task::LocalSet::new();
     match args.mode {
         args::Modes::Client { proto } => {
             match proto {
                 args::Protocol::Tcp(opts) => {
                     let mut client = tcp::TCPClient::new(opts)?;
-                    client.run().await?;
+                    local.run_until(async {
+                        client.run().await?;
+                        Ok::<(), anyhow::Error>(())
+                    }).await;
                 }
                 args::Protocol::Udp(opts) => {
                     let mut client = udp::UDPClient::new(opts)?;
