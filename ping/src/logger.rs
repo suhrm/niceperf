@@ -24,7 +24,7 @@ pub struct UDPEchoResult {
     pub dst_addr: String,
 }
 
-#[derive(Debug, Logging, Default)]
+#[derive(Debug, Logging, Default, Clone)]
 pub struct TCPEchoResult {
     pub seq: u128,
     pub send_timestamp: u128,

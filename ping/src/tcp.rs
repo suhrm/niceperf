@@ -1,8 +1,12 @@
 use std::{
-    cell::RefCell,
+    borrow::{Borrow, BorrowMut},
+    cell::{Cell, RefCell},
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    time::{SystemTime, UNIX_EPOCH},
+    ops::{Add, Deref, DerefMut},
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
@@ -10,10 +14,13 @@ use common::{interface_to_ipaddr, Logger, Statistics, TCPSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream},
     signal,
 };
-use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
+use tokio_util::codec::{
+    FramedParts, FramedRead, FramedWrite, LengthDelimitedCodec,
+};
 
 use crate::{
     args,
@@ -21,11 +28,11 @@ use crate::{
 };
 
 pub struct TCPClient {
-    socket: TokioTcpStream,
     common: args::CommonOpts,
+    socket: common::TCPSocket,
     src_addr: IpAddr,
     dst_addr: IpAddr,
-    internal_couter: u128,
+    internal_couter: Rc<u128>,
     identifier: u16,
     src_port: Option<u16>,
     dst_port: u16,
@@ -51,10 +58,6 @@ impl TCPClient {
         println!("Trying to connect to {}...", dst_addr);
         socket.connect(SocketAddr::new(dst_addr, dst_port))?;
         println!("Connected to {}", dst_addr);
-        let socket = TokioTcpStream::from_std(
-            socket.get_ref().try_clone()?.try_into()?,
-        )?;
-
         let logger = match args.common_opts.file.clone() {
             Some(file_name) => Some(Logger::new(file_name)?),
             None => None,
@@ -62,14 +65,14 @@ impl TCPClient {
 
         Ok(TCPClient {
             socket,
-            common: args.common_opts,
             src_addr,
             dst_addr,
-            internal_couter: 0,
+            internal_couter: Rc::new(0),
             identifier: rand::random::<u16>(),
             src_port: None,
             dst_port,
             logger,
+            common: args.common_opts,
             // Safety we have a default value
             cc: args.cc.unwrap(),
             rtt_stats: Statistics::new(),
@@ -102,13 +105,7 @@ impl TCPClient {
             self.common.interval.unwrap(),
             self.common.preload.unwrap()
         );
-        // TODO: Add support for timeout
-        let mut pacing_timer = tokio::time::interval(
-            std::time::Duration::from_millis(self.common.interval.unwrap()),
-        );
         // TODO: Generate a random payload for the ICMP packet
-
-        // Safety: Safe to unwrap because we have a default value
         let mut payload = TcpEchoPacket {
             identifier: self.identifier,
             seq: 0,
@@ -116,82 +113,117 @@ impl TCPClient {
             recv_timestamp: 0,
             payload: vec![0u8; self.common.len.unwrap() as usize],
         };
+
+        // Convert to tokio TcpStream
+        let mut socket = TokioTcpStream::from_std(
+            self.socket.get_ref().try_clone()?.try_into()?,
+        )?;
+
         // Convert to framed readers and writers as TCP is a streaming protocol
-        let (rx, tx) = self.socket.split();
-        let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
-        let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        let (rx, tx) = socket.into_split();
+        let mut rx = FramedRead::new(rx, LengthDelimitedCodec::new());
+        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
 
         // Recv counter
         let mut recv_counter = 0;
-        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel(1);
+        let mut send_seq = 0;
+        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel::<()>(1);
         let mut timeout_started = false;
+        let interval = self.common.interval.unwrap();
 
-        loop {
-            tokio::select! {
-                _ = pacing_timer.tick() => {
-                    if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
-                        if (recv_counter as u128) >= self.common.count.unwrap() as u128 {
-                            break;
-                        }
-                        else if !timeout_started {
-                            println!("Timeout started waiting for {} packets", self.common.count.unwrap() - recv_counter);
-                            timeout_started = true;
-                            let stop = send_stop.clone();
-                            tokio::spawn(async move {
-                                tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
-                                let _ = stop.send(()).await;
-                            });
-                        }
-                        continue;
+        let num_ping = self.common.count.take();
 
-
+        let send_task = tokio::task::spawn_local(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let mut pacing_timer = tokio::time::interval(
+                std::time::Duration::from_millis(interval),
+            );
+            loop {
+                if let Some(num_ping) = num_ping {
+                    if send_seq > num_ping {
+                        println!("Sent {} packets", num_ping);
+                        break;
                     }
-                    payload.seq = self.internal_couter;
-                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
-                    let encoded_packet = bincode::serialize(&payload)?;
-
-                    f_writer.send(encoded_packet.into()).await?;
-                    self.internal_couter += 1;
                 }
-                Some(Ok(frame)) = f_reader.next() => {
-                    let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u128;
-                    let decoded_packet: TcpEchoPacket = bincode::deserialize(&frame)?;
-                    let send_timestamp = decoded_packet.send_timestamp;
-                    let seq = decoded_packet.seq;
-                    let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
-                    recv_counter += 1;
-                    let result = TCPEchoResult {
-                        seq,
-                        rtt,
-                        send_timestamp,
-                        recv_timestamp,
-                        server_timestamp: decoded_packet.recv_timestamp,
-                        src_addr : src_addr.to_string(),
-                        dst_addr : dst_addr.to_string(),
-                        cc: self.cc.clone(),
-                        size: frame.len(),
-                    };
-                    self.rtt_stats.update(rtt);
-                    // if let Some(logger) = &mut self.logger {
-                    //     logger.log(&result).await?;
-                    // }
-                    // else {
-                    //     println!("{} bytes from {}: tcp_pay_seq={} time={:.3} ms", frame.len(), result.src_addr, result.seq, result.rtt);
-                    // }
-                },
-                _ = recv_stop.recv() => {
-                    println!("wait for 10 seconds to receive all the packets");
-                    break;
-                },
-                _= signal::ctrl_c() => {
-                    // Print on a new line, because some terminals will print "^C" in which makes the text look ugly
-                    println!("\nCtrl-C received, exiting");
-                    break
-                }
+                _ = pacing_timer.tick().await;
+                payload.seq = send_seq as u128;
+                payload.send_timestamp =
+                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+                        as u128;
+                let encoded_packet = bincode::serialize(&payload)?;
+                tx.send(encoded_packet.into()).await?;
+                send_seq = send_seq + 1;
+            }
+            Ok::<(), anyhow::Error>(())
+        });
 
+        let cc = self.cc.clone();
+        let mut logger = self.logger.take();
+        let recv_task = tokio::task::spawn_local(async move {
+            let mut stats = Statistics::new();
+            let mut result = TCPEchoResult {
+                seq: 0,
+                rtt: 0.0,
+                send_timestamp: 0,
+                recv_timestamp: 0,
+                server_timestamp: 0,
+                src_addr: src_addr.to_string(),
+                dst_addr: dst_addr.to_string(),
+                cc: cc.clone(),
+                size: 0,
+            };
+            while let Some(Ok(frame)) = rx.next().await {
+                let recv_timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)?
+                    .as_nanos() as u128;
+                let decoded_packet: TcpEchoPacket =
+                    bincode::deserialize(&frame)?;
+                let send_timestamp = decoded_packet.send_timestamp;
+                let seq = decoded_packet.seq;
+                let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
+
+                result.seq = seq;
+                result.rtt = rtt;
+                result.send_timestamp = send_timestamp;
+                result.recv_timestamp = recv_timestamp;
+                result.server_timestamp = decoded_packet.recv_timestamp;
+                result.size = frame.len() as usize;
+
+                recv_counter += 1;
+                stats.update(rtt);
+                if logger.is_some() {
+                    logger.as_mut().unwrap().log(&result).await?;
+                    if recv_counter % 100 == 0 {
+                        println!("{}", stats);
+                    }
+                } else {
+                    println!(
+                        "{} bytes from {}: tcp_pay_seq={} time={:.3} ms",
+                        result.size, result.src_addr, result.seq, result.rtt
+                    );
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        tokio::select! {
+            _ = send_task => {
+                println!("Send stop");
+                if recv_counter < send_seq {
+                    println!("Sent {} packets, but only received {} packets", send_seq, recv_counter);
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        send_stop.send(()).await?;
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    ).await??;
+                }
+            },
+            _ = recv_stop.recv() => {
+                println!("Recv stop");
             }
         }
-        println!("{}", self.rtt_stats);
+
         Ok(())
     }
 }
@@ -243,11 +275,9 @@ impl TCPServer {
     pub async fn run(&mut self) -> Result<()> {
         loop {
             println!("Waiting for connection");
-            // let (socket, src_addr) = self.socket.accept().await?;
-            // println!("Got connection from {}", src_addr);
             if let Ok((stream, addr)) = self.socket.accept().await {
                 println!("Got connection from {}", addr);
-                tokio::spawn(async move {
+                tokio::task::spawn_local(async move {
                     Self::client_handler(stream).await.unwrap();
                 })
                 .await?;
@@ -257,19 +287,25 @@ impl TCPServer {
 
     pub async fn client_handler(mut stream: TokioTcpStream) -> Result<()> {
         let (rx, tx) = stream.split();
-        let mut f_reader = FramedRead::new(rx, LengthDelimitedCodec::new());
-        let mut f_writer = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        let mut rx = FramedRead::new(rx, LengthDelimitedCodec::new());
+        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
+
         loop {
-            let next_frame = f_reader.next().await;
-            if let Some(Ok(frame)) = next_frame {
-                let recv_timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)?
-                    .as_nanos() as u128;
+            tokio::select! {
+                Some(Ok(frame)) = rx.next() => {
                 let mut decoded_packet: TcpEchoPacket =
-                    bincode::deserialize(&frame)?;
+                    bincode::deserialize(&frame).unwrap();
+                let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+                        as u128;
                 decoded_packet.recv_timestamp = recv_timestamp;
                 let encoded_packet = bincode::serialize(&decoded_packet)?;
-                f_writer.send(encoded_packet.into()).await?;
+                tx.send(encoded_packet.into()).await?;
+
+                },
+                else => {
+                    break;
+                }
+
             }
         }
         Ok(())
