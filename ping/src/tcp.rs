@@ -211,7 +211,12 @@ impl TCPClient {
                 println!("Send stop");
                 if recv_counter < send_seq {
                     println!("Sent {} packets, but only received {} packets", send_seq, recv_counter);
-
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        send_stop.send(()).await?;
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    ).await??;
                 }
             },
             _ = recv_stop.recv() => {
@@ -270,8 +275,6 @@ impl TCPServer {
     pub async fn run(&mut self) -> Result<()> {
         loop {
             println!("Waiting for connection");
-            // let (socket, src_addr) = self.socket.accept().await?;
-            // println!("Got connection from {}", src_addr);
             if let Ok((stream, addr)) = self.socket.accept().await {
                 println!("Got connection from {}", addr);
                 tokio::task::spawn_local(async move {

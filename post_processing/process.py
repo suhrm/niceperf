@@ -42,7 +42,16 @@ def process_piat(data_path: str):
     piat = np.diff(data['send_timestamp'])
     return piat/1e6
 
+def process_seq(data_path: str):
+    data = pd.read_csv(data_path)
+    data = data.dropna()
 
+    seq = data['seq']
+    seq = np.diff(seq)
+    # Find the indecies of the sequence number jumps
+    seq_diff = np.where(seq != 1)
+    print(seq_diff)
+    return seq
 
 
 if __name__ == "__main__":
@@ -62,6 +71,10 @@ if __name__ == "__main__":
         seq, rtt = process_time_series(data_path)
         piat = process_piat(data_path)
         x_piat, ccdf_piat = process_piat_ccdf(data_path)
+        seq_diff = process_seq(data_path)
+        print(seq_diff)
+
+
         ax_piat_ccdf.plot(x_piat, ccdf_piat, label=data_path)
         ax_ccdf.plot(x, ccdf, label=data_path)
         ax_time.plot(seq,rtt, label=data_path)
