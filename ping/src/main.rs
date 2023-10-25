@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
                     local.run_until(async {
                         client.run().await?;
                         Ok::<(), anyhow::Error>(())
-                    }).await;
+                    }).await?;
                 }
                 args::Protocol::Udp(opts) => {
                     let mut client = udp::UDPClient::new(opts)?;
@@ -37,7 +37,10 @@ async fn main() -> Result<()> {
             match proto {
                 args::Protocol::Tcp(opts) => {
                     let mut server = tcp::TCPServer::new(opts)?;
-                    server.run().await?;
+                    local.run_until(async {
+                        server.run().await?;
+                        Ok::<(), anyhow::Error>(())
+                    }).await?;
                 }
                 args::Protocol::Udp(opts) => {
                     let mut server = udp::UDPServer::new(opts)?;
