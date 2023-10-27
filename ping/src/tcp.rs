@@ -6,7 +6,7 @@ use std::{
     ops::{Add, Deref, DerefMut},
     rc::Rc,
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
@@ -294,12 +294,17 @@ impl TCPServer {
         let mut rx = FramedRead::new(rx, LengthDelimitedCodec::new());
         let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
         let mut stats = Statistics::new();
-        let mut time = SystemTime::now();
         let mut recv_counter = 0;
+        let mut time = Instant::now();
         loop {
             tokio::select! {
                 Some(Ok(frame)) = rx.next() => {
-                stats.update(time.elapsed().unwrap().as_millis() as f64);
+                if recv_counter == 0 {
+                    time = Instant::now();
+                } else {
+                    stats.update(time.elapsed().as_millis() as f64);
+                    time = Instant::now();
+                }
                 let mut decoded_packet: TcpEchoPacket =
                     bincode::deserialize(&frame).unwrap();
                 let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
