@@ -64,6 +64,9 @@ pub struct CommonOpts {
     /// Set the amount of packets to preload before following the interval
     #[arg(long, default_value = "1")]
     pub preload: Option<u64>,
+    /// Set whether to log or not 
+    #[arg(long, default_value = "true", conflicts_with = "file")]
+    pub log: Option<bool>,
 }
 #[derive(Args, Clone, Debug)]
 pub struct TCPOpts {

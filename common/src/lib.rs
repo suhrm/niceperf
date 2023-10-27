@@ -308,6 +308,7 @@ impl TCPSocket {
         }
         // Set TCP_NODELAY
         socket.set_nodelay(true)?;
+        socket.set_quickack(true)?; // Enable quickack
 
         // Set the congestion control algorithm if provided
         // otherwise use the default OS algorithm

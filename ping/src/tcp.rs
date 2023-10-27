@@ -133,7 +133,7 @@ impl TCPClient {
 
         let num_ping = self.common.count.take();
 
-        let send_task = tokio::task::spawn_local(async move {
+        let send_task = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let mut pacing_timer = tokio::time::interval(
                 std::time::Duration::from_millis(interval),
@@ -159,7 +159,8 @@ impl TCPClient {
 
         let cc = self.cc.clone();
         let mut logger = self.logger.take();
-        let recv_task = tokio::task::spawn_local(async move {
+        let log = self.common.log.take().unwrap();
+        let recv_task = tokio::spawn(async move {
             let mut stats = Statistics::new();
             let mut result = TCPEchoResult {
                 seq: 0,
@@ -172,6 +173,45 @@ impl TCPClient {
                 cc: cc.clone(),
                 size: 0,
             };
+
+            let (log_writer, mut log_reader) =
+                tokio::sync::mpsc::channel::<TCPEchoResult>(10000);
+            let mut time = 0;
+            let mut stat_piat = Statistics::new();
+            tokio::spawn(async move {
+                while let Some(result) = log_reader.recv().await {
+                    if recv_counter == 0 {
+                        time = result.recv_timestamp;
+                    } else {
+                        let diff = (result.recv_timestamp - time) / 1000000;
+                        stat_piat.update(diff as f64);
+                        time = result.recv_timestamp;
+                    }
+                    stats.update(result.rtt);
+                    if logger.is_some() {
+                        logger.as_mut().unwrap().log(&result).await?;
+                        if recv_counter % 100 == 0 {
+                            println!("RTT: {}", stats);
+                            println!("PIAT: {}", stat_piat);
+                        }
+                    } else if log {
+                        println!(
+                            "{} bytes from {}: tcp_pay_seq={} time={:.3} ms",
+                            result.size,
+                            result.src_addr,
+                            result.seq,
+                            result.rtt
+                        );
+                    } else {
+                        if recv_counter % 100 == 0 {
+                            println!("RTT: {}", stats);
+                            println!("PIAT: {}", stat_piat);
+                        }
+                    }
+                    recv_counter += 1;
+                }
+                Ok::<(), anyhow::Error>(())
+            });
 
             while let Some(Ok(frame)) = rx.next().await {
                 let recv_timestamp = SystemTime::now()
@@ -189,23 +229,7 @@ impl TCPClient {
                 result.recv_timestamp = recv_timestamp;
                 result.server_timestamp = decoded_packet.recv_timestamp;
                 result.size = frame.len() as usize;
-
-                recv_counter += 1;
-                stats.update(rtt);
-                if logger.is_some() {
-                    logger.as_mut().unwrap().log(&result).await?;
-                    if recv_counter % 100 == 0 {
-                        println!("{}", stats);
-                    }
-                } else {
-                    println!(
-                        "{} bytes from {}: tcp_pay_seq={} time={:.3} ms",
-                        result.size, result.src_addr, result.seq, result.rtt
-                    );
-                    if recv_counter % 100 == 0 {
-                        println!("{}", stats);
-                    }
-                }
+                log_writer.send(result.clone()).await?;
             }
             Ok::<(), anyhow::Error>(())
         });
@@ -281,7 +305,7 @@ impl TCPServer {
             println!("Waiting for connection");
             if let Ok((stream, addr)) = self.socket.accept().await {
                 println!("Got connection from {}", addr);
-                tokio::task::spawn_local(async move {
+                tokio::spawn(async move {
                     Self::client_handler(stream).await.unwrap();
                 })
                 .await?;

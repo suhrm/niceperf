@@ -9,19 +9,16 @@ mod tcp;
 mod udp;
 use anyhow::Result;
 use tokio::task;
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<()> {
+    console_subscriber::init();
     let args = args::Opts::parse();
-    let local = task::LocalSet::new();
     match args.mode {
         args::Modes::Client { proto } => {
             match proto {
                 args::Protocol::Tcp(opts) => {
                     let mut client = tcp::TCPClient::new(opts)?;
-                    local.run_until(async {
-                        client.run().await?;
-                        Ok::<(), anyhow::Error>(())
-                    }).await?;
+                    client.run().await?;
                 }
                 args::Protocol::Udp(opts) => {
                     let mut client = udp::UDPClient::new(opts)?;
@@ -37,10 +34,7 @@ async fn main() -> Result<()> {
             match proto {
                 args::Protocol::Tcp(opts) => {
                     let mut server = tcp::TCPServer::new(opts)?;
-                    local.run_until(async {
-                        server.run().await?;
-                        Ok::<(), anyhow::Error>(())
-                    }).await?;
+                    server.run().await?;
                 }
                 args::Protocol::Udp(opts) => {
                     let mut server = udp::UDPServer::new(opts)?;
