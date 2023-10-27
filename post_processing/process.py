@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import sys
-
+import matplotlib as mpl
+mpl.rcParams['agg.path.chunksize'] = 10000
 
 
 def calcCDF(data):
@@ -70,12 +71,12 @@ if __name__ == "__main__":
         x, cdf, ccdf = process_ccdf(data_path)
         seq, rtt = process_time_series(data_path)
         piat = process_piat(data_path)
-        x_piat, ccdf_piat = process_piat_ccdf(data_path)
+        # x_piat, ccdf_piat = process_piat_ccdf(data_path)
         seq_diff = process_seq(data_path)
         print(seq_diff)
 
 
-        ax_piat_ccdf.plot(x_piat, ccdf_piat, label=data_path)
+        # ax_piat_ccdf.plot(x_piat, ccdf_piat, label=data_path)
         ax_ccdf.plot(x, ccdf, label=data_path)
         ax_time.plot(seq,rtt, label=data_path)
         ax_piat.plot(piat, label=data_path)
@@ -100,7 +101,7 @@ if __name__ == "__main__":
 
     min_sample = min(samples, key=len)
     min_sample = len(min_sample)
-    ax_ccdf.set_ylim([10**-np.log10(min_sample), 1])
+    ax_ccdf.set_ylim([10**-np.log10(min_sample/10), 1])
 
     fig_ccdf.legend()
     ax_ccdf.grid(True, which="both", ls="-")

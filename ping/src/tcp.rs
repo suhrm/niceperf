@@ -172,6 +172,7 @@ impl TCPClient {
                 cc: cc.clone(),
                 size: 0,
             };
+
             while let Some(Ok(frame)) = rx.next().await {
                 let recv_timestamp = SystemTime::now()
                     .duration_since(UNIX_EPOCH)?
@@ -201,6 +202,9 @@ impl TCPClient {
                         "{} bytes from {}: tcp_pay_seq={} time={:.3} ms",
                         result.size, result.src_addr, result.seq, result.rtt
                     );
+                    if recv_counter % 100 == 0 {
+                        println!("{}", stats);
+                    }
                 }
             }
             Ok::<(), anyhow::Error>(())
@@ -289,10 +293,13 @@ impl TCPServer {
         let (rx, tx) = stream.split();
         let mut rx = FramedRead::new(rx, LengthDelimitedCodec::new());
         let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
-
+        let mut stats = Statistics::new();
+        let mut time = SystemTime::now();
+        let mut recv_counter = 0;
         loop {
             tokio::select! {
                 Some(Ok(frame)) = rx.next() => {
+                stats.update(time.elapsed().unwrap().as_millis() as f64);
                 let mut decoded_packet: TcpEchoPacket =
                     bincode::deserialize(&frame).unwrap();
                 let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
@@ -300,7 +307,11 @@ impl TCPServer {
                 decoded_packet.recv_timestamp = recv_timestamp;
                 let encoded_packet = bincode::serialize(&decoded_packet)?;
                 tx.send(encoded_packet.into()).await?;
+                if (recv_counter % 100) == 0 {
+                    println!("{}", stats);
 
+                }
+                recv_counter += 1;
                 },
                 else => {
                     break;
