@@ -329,13 +329,13 @@ impl TCPServer {
                     stats.update(time.elapsed().as_millis() as f64);
                     time = Instant::now();
                 }
-                let mut decoded_packet: TcpEchoPacket =
-                    bincode::deserialize(&frame).unwrap();
-                let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-                        as u128;
-                decoded_packet.recv_timestamp = recv_timestamp;
-                let encoded_packet = bincode::serialize(&decoded_packet)?;
-                tx.send(encoded_packet.into()).await?;
+                // let mut decoded_packet: TcpEchoPacket =
+                //     bincode::deserialize(&frame).unwrap();
+                // let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+                //         as u128;
+                // decoded_packet.recv_timestamp = recv_timestamp;
+                // let encoded_packet = bincode::serialize(&decoded_packet)?;
+                tx.send(frame.into()).await?;
                 if (recv_counter % 100) == 0 {
                     println!("{}", stats);
 
