@@ -9,9 +9,8 @@ mod tcp;
 mod udp;
 use anyhow::Result;
 use tokio::task;
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    console_subscriber::init();
     let args = args::Opts::parse();
     match args.mode {
         args::Modes::Client { proto } => {

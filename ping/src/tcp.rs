@@ -128,9 +128,7 @@ impl TCPClient {
         let mut recv_counter = 0;
         let mut send_seq = 0;
         let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel::<()>(1);
-        let mut timeout_started = false;
         let interval = self.common.interval.unwrap();
-
         let num_ping = self.common.count.take();
 
         let send_task = tokio::spawn(async move {
@@ -315,42 +313,41 @@ impl TCPServer {
 
     pub async fn client_handler(mut stream: TokioTcpStream) -> Result<()> {
         let (mut rx, mut tx) = stream.split();
-        // let mut rx = FramedRead::new(rx, LengthDelimitedCodec::new());
-        // let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        let mut rx = FramedRead::new(rx, LengthDelimitedCodec::new());
+        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
         let mut stats = Statistics::new();
         let mut recv_counter = 0;
         let mut time = Instant::now();
-        tokio::io::copy(&mut rx, &mut tx).await?;
 
+        loop {
+            tokio::select! {
+                Some(Ok(frame)) = rx.next() => {
+                if recv_counter == 0 {
+                    time = Instant::now();
+                } else {
+                    stats.update(time.elapsed().as_millis() as f64);
+                    time = Instant::now();
+                }
+                let mut decoded_packet: TcpEchoPacket =
+                    bincode::deserialize(&frame).unwrap();
+                let recv_timestamp =
+                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+                                    as u128;
+                decoded_packet.recv_timestamp = recv_timestamp;
+                let encoded_packet = bincode::serialize(&decoded_packet)?;
+                tx.send(encoded_packet.into()).await?;
+                if (recv_counter % 100) == 0 {
+                    println!("{}", stats);
 
-        // loop {
-        //     tokio::select! {
-        //         Some(Ok(frame)) = rx.next() => {
-        //         if recv_counter == 0 {
-        //             time = Instant::now();
-        //         } else {
-        //             stats.update(time.elapsed().as_millis() as f64);
-        //             time = Instant::now();
-        //         }
-        //         // let mut decoded_packet: TcpEchoPacket =
-        //         //     bincode::deserialize(&frame).unwrap();
-        //         // let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        //         //         as u128;
-        //         // decoded_packet.recv_timestamp = recv_timestamp;
-        //         // let encoded_packet = bincode::serialize(&decoded_packet)?;
-        //         tx.send(frame.into()).await?;
-        //         if (recv_counter % 100) == 0 {
-        //             println!("{}", stats);
-        //
-        //         }
-        //         recv_counter += 1;
-        //         },
-        //         else => {
-        //             break;
-        //         }
-        //
-        //     }
-        // }
+                }
+                recv_counter += 1;
+                },
+                else => {
+                    println!("Client disconnected");
+                    break;
+                }
+            }
+        }
         Ok(())
     }
 }
