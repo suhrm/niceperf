@@ -35,4 +35,5 @@ pub struct TCPEchoResult {
     pub src_addr: String,
     pub dst_addr: String,
     pub cc: String,
+    pub retrans: u32,
 }

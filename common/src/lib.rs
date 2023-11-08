@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use linux_raw_sys::net::tcp_info;
 use pnet_datalink;
 use quinn::{ClientConfig, ServerConfig, VarInt};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -227,7 +228,6 @@ impl UDPSocket {
 }
 
 // Create new TCP socket
-
 pub struct TCPSocket(Socket);
 
 impl TCPSocket {
@@ -330,6 +330,28 @@ impl TCPSocket {
 
         Ok(TCPSocket(socket))
     }
+    /// Create a new TCPSocket from a raw socket2::Socket
+    /// Safety: We are sure that the socket is a TCP socket or we return an
+    /// error otherwise
+    pub fn from_raw_socket(socket: Socket) -> Result<Self> {
+        unsafe {
+            let mut sock_type = libc::c_int::from(0);
+            let ret = libc::getsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                &mut sock_type as *mut _ as *mut libc::c_void,
+                std::mem::size_of::<libc::c_int>() as *mut libc::socklen_t,
+            );
+            if ret == -1 {
+                Err(anyhow!("Unable to get socket type"))
+            } else if sock_type != libc::SOCK_STREAM {
+                Err(anyhow!("Socket is not a TCP socket"))
+            } else {
+                Ok(Self(socket))
+            }
+        }
+    }
     pub fn get_mut(&mut self) -> &mut Socket {
         &mut self.0
     }
@@ -351,6 +373,25 @@ impl TCPSocket {
     pub fn listen(&mut self, backlog: i32) -> Result<()> {
         self.0.listen(backlog)?;
         Ok(())
+    }
+
+    pub fn get_stats(&self) -> Result<tcp_info> {
+        unsafe {
+            let mut tcp_info: tcp_info = std::mem::zeroed();
+            let mut len = std::mem::size_of::<tcp_info>() as u32;
+            let ret = libc::getsockopt(
+                self.0.as_raw_fd(),
+                libc::SOL_TCP,
+                libc::TCP_INFO,
+                &mut tcp_info as *mut _ as *mut libc::c_void,
+                &mut len as *mut _ as *mut libc::socklen_t,
+            );
+            if ret == -1 {
+                Err(anyhow!("Failed to get TCP info"))
+            } else {
+                Ok(tcp_info)
+            }
+        }
     }
 }
 

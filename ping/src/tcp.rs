@@ -144,6 +144,8 @@ impl TCPClient {
         let cc = self.cc.clone();
         let mut logger = self.logger.take();
         let log = self.common.log.take().unwrap();
+        let raw_socket =
+            TCPSocket::from_raw_socket(self.socket.get_ref().try_clone()?)?;
         let recv_task = tokio::spawn(async move {
             let mut stats = Statistics::new();
             let mut result = TCPEchoResult {
@@ -156,6 +158,7 @@ impl TCPClient {
                 dst_addr: dst_addr.to_string(),
                 cc: cc.clone(),
                 size: 0,
+                retrans: 0,
             };
 
             let (log_writer, mut log_reader) =
@@ -180,11 +183,13 @@ impl TCPClient {
                         }
                     } else if log {
                         println!(
-                            "{} bytes from {}: tcp_pay_seq={} time={:.3} ms",
+                            "{} bytes from {}: tcp_pay_seq={} time={:.3} ms \
+                             retrans={}",
                             result.size,
                             result.src_addr,
                             result.seq,
-                            result.rtt
+                            result.rtt,
+                            result.retrans
                         );
                     } else {
                         if recv_counter % 100 == 0 {
@@ -205,6 +210,9 @@ impl TCPClient {
                     .as_nanos() as u128;
                 let decoded_packet: TcpEchoPacket =
                     bincode::deserialize(&frame)?;
+                // Get the current socket stats
+                let stats = raw_socket.get_stats()?;
+
                 let send_timestamp = decoded_packet.send_timestamp;
                 let seq = decoded_packet.seq;
                 let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
@@ -215,6 +223,8 @@ impl TCPClient {
                 result.recv_timestamp = recv_timestamp;
                 result.server_timestamp = decoded_packet.recv_timestamp;
                 result.size = frame.len() as usize;
+                result.retrans = stats.tcpi_total_retrans as u32;
+
                 log_writer.send(result.clone()).await?;
             }
             Ok::<(), anyhow::Error>(())

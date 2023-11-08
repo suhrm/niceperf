@@ -73,14 +73,14 @@ pub struct TCPOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
     // Set the source port
-    #[arg(long, conflicts_with = "common_opts.iface")]
-    pub src_port: Option<u16>,
+    // #[arg(long, conflicts_with = "common_opts.iface")]
+    // pub src_port: Option<u16>,
     // Set the destination port
     #[arg(long)]
     pub dst_port: u16,
     /// Set the source address
-    #[arg(long, conflicts_with = "common_opts.iface")]
-    pub src_addr: Option<IpAddr>,
+    // #[arg(long, conflicts_with = "common_opts.iface")]
+    // pub src_addr: Option<IpAddr>,
     /// Set the destination address
     #[arg(long)]
     pub dst_addr: IpAddr,
