@@ -64,7 +64,7 @@ pub struct CommonOpts {
     /// Set the amount of packets to preload before following the interval
     #[arg(long, default_value = "1")]
     pub preload: Option<u64>,
-    /// Set whether to log or not 
+    /// Set whether to log or not
     #[arg(long, default_value = "true", conflicts_with = "file")]
     pub log: Option<bool>,
 }
@@ -72,13 +72,15 @@ pub struct CommonOpts {
 pub struct TCPOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
-    // TODO: Same as with UDP, do we need the source port and address?
-    /// Set the source port
-    // #[arg(long)]
-    // pub src_port: Option<u16>,
-    /// Set the destination port
+    // Set the source port
+    #[arg(long, conflicts_with = "common_opts.iface")]
+    pub src_port: Option<u16>,
+    // Set the destination port
     #[arg(long)]
     pub dst_port: u16,
+    /// Set the source address
+    #[arg(long, conflicts_with = "common_opts.iface")]
+    pub src_addr: Option<IpAddr>,
     /// Set the destination address
     #[arg(long)]
     pub dst_addr: IpAddr,

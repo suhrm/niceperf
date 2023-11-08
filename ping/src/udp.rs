@@ -220,7 +220,7 @@ impl UDPServer {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        let mut buf = [0u8; 1500];
+        let mut buf = [0u8; u16::MAX as usize];
 
         loop {
             let (len, recv_addr) = self.socket.recv_from(&mut buf).await?;

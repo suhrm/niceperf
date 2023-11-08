@@ -3,3 +3,10 @@ ping/integration_test/__pycache__
 ping/venv
 latency/cert.der
 latency/key.der
+*.txt
+*.pcap
+*.png
+**/*.pyc
+**/*.txt
+**/*.pcap
+**/*.png

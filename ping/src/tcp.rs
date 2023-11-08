@@ -1,11 +1,6 @@
 use std::{
-    borrow::{Borrow, BorrowMut},
-    cell::{Cell, RefCell},
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    ops::{Add, Deref, DerefMut},
-    rc::Rc,
-    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,32 +8,23 @@ use anyhow::{anyhow, Result};
 use common::{interface_to_ipaddr, Logger, Statistics, TCPSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream},
-    signal,
+use tokio::net::{
+    TcpListener as TokioTcpListener, TcpStream as TokioTcpStream,
 };
-use tokio_util::codec::{
-    FramedParts, FramedRead, FramedWrite, LengthDelimitedCodec,
-};
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use crate::{
-    args,
-    logger::{PingResult, TCPEchoResult},
-};
+use crate::{args, logger::TCPEchoResult};
 
 pub struct TCPClient {
     common: args::CommonOpts,
     socket: common::TCPSocket,
     src_addr: IpAddr,
     dst_addr: IpAddr,
-    internal_couter: Rc<u128>,
     identifier: u16,
     src_port: Option<u16>,
     dst_port: u16,
     logger: Option<Logger<TCPEchoResult>>,
     cc: String,
-    rtt_stats: Statistics,
 }
 
 impl TCPClient {
@@ -67,7 +53,6 @@ impl TCPClient {
             socket,
             src_addr,
             dst_addr,
-            internal_couter: Rc::new(0),
             identifier: rand::random::<u16>(),
             src_port: None,
             dst_port,
@@ -75,7 +60,6 @@ impl TCPClient {
             common: args.common_opts,
             // Safety we have a default value
             cc: args.cc.unwrap(),
-            rtt_stats: Statistics::new(),
         })
     }
     pub async fn run(&mut self) -> Result<()> {
@@ -115,7 +99,7 @@ impl TCPClient {
         };
 
         // Convert to tokio TcpStream
-        let mut socket = TokioTcpStream::from_std(
+        let socket = TokioTcpStream::from_std(
             self.socket.get_ref().try_clone()?.try_into()?,
         )?;
 
@@ -146,8 +130,10 @@ impl TCPClient {
                 _ = pacing_timer.tick().await;
                 payload.seq = send_seq as u128;
                 payload.send_timestamp =
-                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-                        as u128;
+                    std::time::Duration::from(nix::time::clock_gettime(
+                        nix::time::ClockId::CLOCK_MONOTONIC,
+                    )?)
+                    .as_nanos() as u128;
                 let encoded_packet = bincode::serialize(&payload)?;
                 tx.send(encoded_packet.into()).await?;
                 send_seq = send_seq + 1;
@@ -212,8 +198,10 @@ impl TCPClient {
             });
 
             while let Some(Ok(frame)) = rx.next().await {
-                let recv_timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)?
+                let recv_timestamp =
+                    std::time::Duration::from(nix::time::clock_gettime(
+                        nix::time::ClockId::CLOCK_MONOTONIC,
+                    )?)
                     .as_nanos() as u128;
                 let decoded_packet: TcpEchoPacket =
                     bincode::deserialize(&frame)?;
@@ -247,6 +235,10 @@ impl TCPClient {
             },
             _ = recv_stop.recv() => {
                 println!("Recv stop");
+            },
+            failure = recv_task => {
+                panic!("Recv task failed: {:?}", failure);
+
             }
         }
 
@@ -312,7 +304,7 @@ impl TCPServer {
     }
 
     pub async fn client_handler(mut stream: TokioTcpStream) -> Result<()> {
-        let (mut rx, mut tx) = stream.split();
+        let (rx, tx) = stream.split();
         let mut rx = FramedRead::new(rx, LengthDelimitedCodec::new());
         let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
         let mut stats = Statistics::new();

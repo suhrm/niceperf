@@ -5,6 +5,7 @@ members = [
   "ping",
   "common",
   "logging-derive",
+  "XDPing",
 ]
 [workspace.dependencies]
 anyhow = "1.0.68" 
