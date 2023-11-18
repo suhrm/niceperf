@@ -42,6 +42,7 @@ impl ICMPClient {
         let src_addr = interface_to_ipaddr(iface)?;
         let dst_addr = args.dst_addr;
         let socket = ICMPSocket::new(Some(iface), None)?;
+        socket.connect(dst_addr)?;
 
         let logger = match args.common_opts.file.clone() {
             Some(file_name) => Some(Logger::new(file_name)?),
@@ -74,7 +75,7 @@ impl ICMPClient {
             }
         };
 
-        let mut buf = [0u8; 1500];
+        let mut buf = [0u8; u16::MAX as usize];
 
         // Safety: Safe to unwrap because we have a default value
         println!(
@@ -145,7 +146,7 @@ impl ICMPClient {
                         }
                     };
 
-                    self.socket.send_to(&icmp_packet, &self.dst_addr).await?;
+                    self.socket.send(&icmp_packet).await?;
                     self.internal_couter += 1;
                 },
                 Ok(len) = self.socket.read(&mut buf) => {

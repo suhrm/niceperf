@@ -78,6 +78,13 @@ impl ICMPSocket {
     pub fn get_ref(&self) -> &Socket {
         &self.0
     }
+    /// Connect to the provided address allows to use send and recv instead of
+    /// send_to and recv_from
+    pub fn connect(&self, addr: IpAddr) -> Result<()> {
+        let addr = SocketAddr::new(addr, 0);
+        self.0.connect(&addr.into())?;
+        Ok(())
+    }
 }
 
 impl AsRawFd for ICMPSocket {
@@ -120,6 +127,13 @@ impl AsyncICMPSocket {
         match guard
             .try_io(|inner| inner.get_ref().get_ref().send_to(packet, &addr))
         {
+            Ok(res) => Ok(res?),
+            Err(_e) => Err(anyhow!("Error sending packet")),
+        }
+    }
+    pub async fn send(&mut self, packet: &[u8]) -> Result<usize> {
+        let mut guard = self.inner.writable().await?;
+        match guard.try_io(|inner| inner.get_ref().get_ref().send(packet)) {
             Ok(res) => Ok(res?),
             Err(_e) => Err(anyhow!("Error sending packet")),
         }
@@ -335,16 +349,21 @@ impl TCPSocket {
     /// error otherwise
     pub fn from_raw_socket(socket: Socket) -> Result<Self> {
         unsafe {
-            let mut sock_type = libc::c_int::from(0);
+            let sock_fd = socket.as_raw_fd();
+            let opt_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            let mut sock_type = libc::SOCK_STREAM;
             let ret = libc::getsockopt(
-                socket.as_raw_fd(),
+                sock_fd,
                 libc::SOL_SOCKET,
                 libc::SO_TYPE,
                 &mut sock_type as *mut _ as *mut libc::c_void,
-                std::mem::size_of::<libc::c_int>() as *mut libc::socklen_t,
+                &opt_len as *const _ as *mut libc::socklen_t,
             );
             if ret == -1 {
-                Err(anyhow!("Unable to get socket type"))
+                Err(anyhow!(
+                    "Unable to get socket type: Errno  {}",
+                    nix::errno::Errno::last()
+                ))
             } else if sock_type != libc::SOCK_STREAM {
                 Err(anyhow!("Socket is not a TCP socket"))
             } else {

@@ -235,16 +235,8 @@ impl TCPClient {
                 println!("Send stop");
                 if recv_counter < send_seq {
                     println!("Sent {} packets, but only received {} packets", send_seq, recv_counter);
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_secs(10)).await;
-                        send_stop.send(()).await?;
-                        Ok::<(), anyhow::Error>(())
-                    }
-                    ).await??;
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
-            },
-            _ = recv_stop.recv() => {
-                println!("Recv stop");
             },
             failure = recv_task => {
                 panic!("Recv task failed: {:?}", failure);
