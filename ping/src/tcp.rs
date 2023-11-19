@@ -62,7 +62,10 @@ impl TCPClient {
             cc: args.cc.unwrap(),
         })
     }
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(
+        &mut self,
+        mut data_ch: Option<std::sync::mpsc::Sender<f64>>,
+    ) -> Result<()> {
         let dst_addr = match self.dst_addr {
             IpAddr::V4(addr) => addr,
             IpAddr::V6(_) => {
@@ -75,8 +78,6 @@ impl TCPClient {
                 return Err(anyhow!("IPv6 is not supported yet"));
             }
         };
-
-        let _buf = [0u8; 1500];
 
         // Safety: Safe to unwrap because we have a default value
         println!(
@@ -165,6 +166,7 @@ impl TCPClient {
                 tokio::sync::mpsc::channel::<TCPEchoResult>(10000);
             let mut time = 0;
             let mut stat_piat = Statistics::new();
+            let data_ch = data_ch.take();
             tokio::spawn(async move {
                 while let Some(result) = log_reader.recv().await {
                     if recv_counter == 0 {
@@ -175,6 +177,9 @@ impl TCPClient {
                         time = result.recv_timestamp;
                     }
                     stats.update(result.rtt);
+                    if let Some(data_ch) = data_ch.as_ref() {
+                        data_ch.send(result.rtt)?;
+                    }
                     if logger.is_some() {
                         logger.as_mut().unwrap().log(&result).await?;
                         if recv_counter % 100 == 0 {

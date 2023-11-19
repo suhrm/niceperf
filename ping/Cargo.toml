@@ -23,4 +23,7 @@ ctor = {}
 console-subscriber = "0.2.0"
 polling = "3.2.0"
 nix = {version= "0.27.1" , features=["time"]}
+egui = "0.23.0"
+egui_plot = "0.23.0"
+eframe = "0.23.0"
 
