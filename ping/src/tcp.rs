@@ -35,12 +35,26 @@ impl TCPClient {
             .clone()
             .ok_or(anyhow!("No interface specified"))?;
         let iface = iface.as_str();
-        let src_addr = interface_to_ipaddr(iface)?;
-        let dst_addr = args.dst_addr;
+
+        let src_addr = match args.common_opts.src_addr {
+            Some(addr) => addr,
+            None => interface_to_ipaddr(iface)?,
+        };
+
+        let src_port = match args.src_port {
+            Some(port) => port,
+            None => 0,
+        };
+
+        let dst_addr = args.common_opts.dst_addr;
         let dst_port = args.dst_port;
 
-        let mut socket =
-            TCPSocket::new(Some(iface), None, args.mss, args.cc.clone())?;
+        let mut socket = TCPSocket::new(
+            Some(iface),
+            Some((src_addr, src_port)),
+            args.mss,
+            args.cc.clone(),
+        )?;
         println!("Trying to connect to {}...", dst_addr);
         socket.connect(SocketAddr::new(dst_addr, dst_port))?;
         println!("Connected to {}", dst_addr);
@@ -265,7 +279,7 @@ pub struct TCPServer {
 
 impl TCPServer {
     pub fn new(args: args::TCPOpts) -> Result<TCPServer> {
-        let dst_addr = args.dst_addr;
+        let dst_addr = args.common_opts.dst_addr;
         let dst_port = args.dst_port;
 
         let mut socket = TCPSocket::new(

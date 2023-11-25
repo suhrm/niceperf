@@ -34,7 +34,8 @@ impl ICMPClient {
             .ok_or(anyhow!("No interface specified"))?;
         let iface = iface.as_str();
         let src_addr = interface_to_ipaddr(iface)?;
-        let dst_addr = args.dst_addr;
+
+        let dst_addr = args.common_opts.dst_addr;
         let socket = ICMPSocket::new(Some(iface), None)?;
         socket.connect(dst_addr)?;
 
