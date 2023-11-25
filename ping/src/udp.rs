@@ -1,13 +1,16 @@
 use std::{
     collections::HashMap,
     net::IpAddr,
+    ops::{Add, AddAssign},
+    os::fd::{AsRawFd, FromRawFd},
+    sync::{atomic::AtomicUsize, Arc},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
 use common::{interface_to_ipaddr, Logger, Statistics, UDPSocket};
 use serde::{Deserialize, Serialize};
-use tokio::{net::UdpSocket as tokioUdpSocket};
+use tokio::net::UdpSocket as tokioUdpSocket;
 
 use crate::{args, logger::UDPEchoResult};
 
@@ -261,7 +264,8 @@ impl UDPServer {
         let dst_addr = args.dst_addr;
         let dst_port = args.dst_port;
 
-        let socket = UDPSocket::new(None, Some((dst_addr, dst_port)))?;
+        let mut socket = UDPSocket::new(None, Some((dst_addr, dst_port)))?;
+        socket.get_mut().set_reuse_address(true)?;
         let socket = tokioUdpSocket::from_std(
             socket.get_ref().try_clone()?.try_into()?,
         )?;
@@ -278,9 +282,9 @@ impl UDPServer {
 
     pub async fn run(&mut self) -> Result<()> {
         let mut buf = [0u8; u16::MAX as usize];
-
         loop {
             let (len, recv_addr) = self.socket.recv_from(&mut buf).await?;
+
             let mut recv_packet: UdpEchoPacket =
                 bincode::deserialize(&buf[..len])?;
             let recv_timestamp =
@@ -288,6 +292,49 @@ impl UDPServer {
             recv_packet.recv_timestamp = recv_timestamp;
             let echo_packet = bincode::serialize(&recv_packet)?;
             self.socket.send_to(&echo_packet, recv_addr).await?;
+
+            let mut client_sock = common::UDPSocket::new(None, None)?;
+            client_sock.get_mut().set_reuse_address(true)?;
+            client_sock.bind(self.socket.local_addr()?)?;
+            let client_sock = tokioUdpSocket::from_std(
+                client_sock.get_ref().try_clone()?.try_into()?,
+            )?;
+
+            client_sock.connect(recv_addr).await?;
+            tokio::spawn(async move {
+                println!("New client: {:?}", recv_addr);
+                match Self::handle_client(client_sock).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        println!("Error: {:?}:{:?}", e, recv_addr);
+                    }
+                }
+            });
+        }
+    }
+
+    pub async fn handle_client(
+        client_sock: tokio::net::UdpSocket,
+    ) -> Result<()> {
+        let mut buf = [0u8; u16::MAX as usize];
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(10)) => {
+                    Err(anyhow!("Client timeout"))?;
+                },
+                Ok(len) = client_sock.recv(&mut buf) => {
+                    let mut recv_packet: UdpEchoPacket =
+                        bincode::deserialize(&buf[..len])?;
+                    let recv_timestamp =
+                        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+                    recv_packet.recv_timestamp = recv_timestamp;
+                    let echo_packet = bincode::serialize(&recv_packet)?;
+                    client_sock.send(&echo_packet).await?;
+                }
+                else => {
+                    Err(anyhow!("Client error"))?;
+                }
+            }
         }
     }
 }

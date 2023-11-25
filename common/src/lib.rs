@@ -263,6 +263,10 @@ impl UDPSocket {
         self.0.connect(&addr.into())?;
         Ok(())
     }
+    pub fn bind(&self, addr: SocketAddr) -> Result<()> {
+        self.0.bind(&addr.into())?;
+        Ok(())
+    }
 }
 
 // Create new TCP socket
