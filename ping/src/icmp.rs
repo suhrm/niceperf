@@ -27,16 +27,17 @@ pub struct ICMPClient {
 
 impl ICMPClient {
     pub fn new(args: args::ICMPOpts) -> Result<ICMPClient> {
-        let iface = args
-            .common_opts
-            .iface
-            .clone()
-            .ok_or(anyhow!("No interface specified"))?;
-        let iface = iface.as_str();
-        let src_addr = interface_to_ipaddr(iface)?;
+        let iface = match args.common_opts.iface.clone() {
+            Some(iface) => Some(iface),
+            None => None,
+        };
+        let src_addr = match args.common_opts.src_addr {
+            Some(addr) => addr,
+            None => interface_to_ipaddr(iface.as_ref().unwrap())?,
+        };
 
         let dst_addr = args.common_opts.dst_addr;
-        let socket = ICMPSocket::new(Some(iface), None)?;
+        let socket = ICMPSocket::new(iface.as_deref(), Some(src_addr))?;
         socket.connect(dst_addr)?;
 
         let logger = match args.common_opts.file.clone() {

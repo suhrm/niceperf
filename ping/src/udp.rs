@@ -29,15 +29,13 @@ pub struct UDPClient {
 
 impl UDPClient {
     pub fn new(args: args::UDPOpts) -> Result<UDPClient> {
-        let iface = args
-            .common_opts
-            .iface
-            .clone()
-            .ok_or(anyhow!("No interface specified"))?;
-        let iface = iface.as_str();
+        let iface = match args.common_opts.iface.clone() {
+            Some(iface) => Some(iface),
+            None => None,
+        };
         let src_addr = match args.common_opts.src_addr {
             Some(addr) => addr,
-            None => interface_to_ipaddr(iface)?,
+            None => interface_to_ipaddr(iface.as_ref().unwrap())?,
         };
 
         let src_port = match args.src_port {
@@ -48,7 +46,8 @@ impl UDPClient {
         let dst_addr = args.common_opts.dst_addr;
         let dst_port = args.dst_port;
 
-        let socket = UDPSocket::new(Some(iface), Some((src_addr, src_port)))?;
+        let socket =
+            UDPSocket::new(iface.as_deref(), Some((src_addr, src_port)))?;
         socket.connect((dst_addr, dst_port))?;
 
         let logger = match args.common_opts.file.clone() {

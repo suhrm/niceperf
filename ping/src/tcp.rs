@@ -29,16 +29,13 @@ pub struct TCPClient {
 
 impl TCPClient {
     pub fn new(args: args::TCPOpts) -> Result<TCPClient> {
-        let iface = args
-            .common_opts
-            .iface
-            .clone()
-            .ok_or(anyhow!("No interface specified"))?;
-        let iface = iface.as_str();
-
+        let iface = match args.common_opts.iface.clone() {
+            Some(iface) => Some(iface),
+            None => None,
+        };
         let src_addr = match args.common_opts.src_addr {
             Some(addr) => addr,
-            None => interface_to_ipaddr(iface)?,
+            None => interface_to_ipaddr(iface.as_ref().unwrap())?,
         };
 
         let src_port = match args.src_port {
@@ -50,7 +47,7 @@ impl TCPClient {
         let dst_port = args.dst_port;
 
         let mut socket = TCPSocket::new(
-            Some(iface),
+            iface.as_deref(),
             Some((src_addr, src_port)),
             args.mss,
             args.cc.clone(),
