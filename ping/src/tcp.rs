@@ -109,7 +109,7 @@ impl TCPClient {
         // Recv counter
         let mut recv_counter = 0;
         let mut send_seq = 0;
-        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel::<()>(1);
+        let (_send_stop, _recv_stop) = tokio::sync::mpsc::channel::<()>(1);
         let interval = self.common.interval.unwrap();
         let num_ping = self.common.count.take();
 

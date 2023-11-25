@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use common::{interface_to_ipaddr, Logger, Statistics, UDPSocket};
 use serde::{Deserialize, Serialize};
-use tokio::{net::UdpSocket as tokioUdpSocket, signal};
+use tokio::{net::UdpSocket as tokioUdpSocket};
 
 use crate::{args, logger::UDPEchoResult};
 
@@ -71,7 +71,7 @@ impl UDPClient {
             }
         };
 
-        let mut buf = [0u8; u16::MAX as usize];
+        let _buf = [0u8; u16::MAX as usize];
 
         // Safety: Safe to unwrap because we have a default value
         println!(
@@ -87,7 +87,7 @@ impl UDPClient {
         // TODO: Add support for timeout
         let _timeout_tracker =
             tokio::time::interval(std::time::Duration::from_millis(10 * 1000));
-        let mut pacing_timer = tokio::time::interval(
+        let _pacing_timer = tokio::time::interval(
             std::time::Duration::from_millis(self.common.interval.unwrap()),
         );
         // TODO: Generate a random payload for the ICMP packet

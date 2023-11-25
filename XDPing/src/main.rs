@@ -1,10 +1,9 @@
 use std::{
-    ffi::{CStr, CString},
-    sync::Arc,
+    ffi::{CString},
 };
 
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser};
 
 #[derive(Parser)]
 struct Opts {
@@ -25,7 +24,7 @@ fn main() -> Result<()> {
     interface.set_queue(opts.queue);
 
 
-    let mut socket = xdpilone::Socket::new(&interface);
+    let _socket = xdpilone::Socket::new(&interface);
 
     Ok(())
 }

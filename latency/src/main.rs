@@ -2,18 +2,16 @@
 #![feature(associated_type_defaults)]
 
 use std::{
-    marker::PhantomData,
     net::{IpAddr, SocketAddr},
-    time::{Duration, UNIX_EPOCH},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result};
 use clap::Parser;
-use common::Logging;
-use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::conn_types::{socket_kind, ConnCtx, ConnRunner, UdpLatency};
+
+use tokio::io::{AsyncReadExt};
+
+
 mod args;
 mod conn_types;
 mod protocol;
@@ -30,7 +28,7 @@ async fn main() {
         args::Modes::Server(args::Server {
             listen_addr,
             listen_port,
-            data_port_range,
+            data_port_range: _,
         }) => {
             let mut server = CtrlServer::new((listen_addr, listen_port).into());
             server.run().await.unwrap();

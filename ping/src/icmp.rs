@@ -1,16 +1,8 @@
-use std::{
-    net::IpAddr,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::net::IpAddr;
 
 use anyhow::{anyhow, Result};
-use common::{
-    interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Logger, Statistics,
-};
+use common::{interface_to_ipaddr, ICMPSocket, Logger, Statistics};
 use etherparse::{IcmpEchoHeader, Icmpv4Header, Icmpv4Type};
-use tokio::signal;
-use tokio_util::codec::{FramedWrite, LengthDelimitedCodec};
 
 use crate::{args, logger::PingResult};
 pub struct ICMPClient {
@@ -91,7 +83,7 @@ impl ICMPClient {
         // TODO: Add support for timeout
         let _timeout_tracker =
             tokio::time::interval(std::time::Duration::from_millis(10 * 1000));
-        let mut pacing_timer = tokio::time::interval(
+        let _pacing_timer = tokio::time::interval(
             std::time::Duration::from_millis(self.common.interval.unwrap()),
         );
         // TODO: Generate a random payload for the ICMP packet
@@ -101,9 +93,6 @@ impl ICMPClient {
         if payload.len() < 16 {
             Err(anyhow!("Payload is too small"))?;
         }
-        // Recv counter
-        let mut recv_counter = 0;
-        let mut timeout_started = false;
 
         // Recv counter
         let mut send_seq: u128 = 0;
