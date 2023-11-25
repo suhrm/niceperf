@@ -180,7 +180,7 @@ impl UDPClient {
                         }
                     } else if log {
                         println!(
-                            "{} bytes from {}: tcp_pay_seq={} time={:.3} ms ",
+                            "{} bytes from {}: udp_pay_seq={} time={:.3} ms ",
                             result.size,
                             result.src_addr,
                             result.seq,
