@@ -18,6 +18,30 @@ use tokio::io::unix::AsyncFd;
 pub struct ICMPSocket(Socket);
 
 impl ICMPSocket {
+    pub fn from_raw_socket(socket: Socket) -> Result<Self> {
+        unsafe {
+            let sock_fd = socket.as_raw_fd();
+            let opt_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            let mut sock_type = libc::SOCK_RAW;
+            let ret = libc::getsockopt(
+                sock_fd,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                &mut sock_type as *mut _ as *mut libc::c_void,
+                &opt_len as *const _ as *mut libc::socklen_t,
+            );
+            if ret == -1 {
+                Err(anyhow!(
+                    "Unable to get socket type: Errno  {}",
+                    nix::errno::Errno::last()
+                ))
+            } else if sock_type != libc::SOCK_RAW {
+                Err(anyhow!("Socket is not a RAW socket"))
+            } else {
+                Ok(Self(socket))
+            }
+        }
+    }
     pub fn new(
         bind_interface: Option<&str>,
         bind_address: Option<IpAddr>,

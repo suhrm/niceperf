@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     net::IpAddr,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
@@ -12,7 +12,7 @@ use tokio::{net::UdpSocket as tokioUdpSocket, signal};
 use crate::{args, logger::UDPEchoResult};
 
 pub struct UDPClient {
-    socket: tokio::net::UdpSocket,
+    socket: common::UDPSocket,
     common: args::CommonOpts,
     src_addr: IpAddr,
     dst_addr: IpAddr,
@@ -37,9 +37,7 @@ impl UDPClient {
         let dst_port = args.dst_port;
 
         let socket = UDPSocket::new(Some(iface), None)?;
-        let socket = tokioUdpSocket::from_std(
-            socket.get_ref().try_clone()?.try_into()?,
-        )?;
+        socket.connect((dst_addr, dst_port))?;
 
         let logger = match args.common_opts.file.clone() {
             Some(file_name) => Some(Logger::new(file_name)?),
@@ -66,14 +64,14 @@ impl UDPClient {
                 return Err(anyhow!("IPv6 is not supported yet"));
             }
         };
-        let _src_addr = match self.src_addr {
+        let src_addr = match self.src_addr {
             IpAddr::V4(addr) => addr,
             IpAddr::V6(_addr) => {
                 return Err(anyhow!("IPv6 is not supported yet"));
             }
         };
 
-        let mut buf = [0u8; 1500];
+        let mut buf = [0u8; u16::MAX as usize];
 
         // Safety: Safe to unwrap because we have a default value
         println!(
@@ -103,80 +101,139 @@ impl UDPClient {
             payload: vec![0u8; self.common.len.unwrap() as usize],
         };
         // Recv counter
+        let mut send_seq = 0;
         let mut recv_counter = 0;
-        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel(1);
-        let mut timeout_started = false;
+        let interval = self.common.interval.unwrap();
+        let num_ping = self.common.count.take();
 
-        loop {
-            tokio::select! {
-                _ = pacing_timer.tick() => {
-                    if  self.common.count.is_some() && self.internal_couter >= self.common.count.unwrap() as u128 {
-                        if (recv_counter as u128) >= self.common.count.unwrap() as u128 {
-                            break;
-                        }
-                        else if !timeout_started {
-                            println!("Timeout started waiting for {} packets", self.common.count.unwrap() - recv_counter);
-                            timeout_started = true;
-                            let stop = send_stop.clone();
-                            tokio::spawn( async move {
-                                tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
-                                let _ = stop.send(()).await;
-                            });
-                        }
-                        continue;
+        let tx = tokio::net::UdpSocket::from_std(
+            self.socket.get_ref().try_clone()?.try_into()?,
+        )?;
 
+        let rx = tokio::net::UdpSocket::from_std(
+            self.socket.get_ref().try_clone()?.try_into()?,
+        )?;
 
+        let send_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let mut pacing_timer = tokio::time::interval(
+                std::time::Duration::from_millis(interval),
+            );
+            loop {
+                if let Some(num_ping) = num_ping {
+                    if send_seq > num_ping {
+                        println!("Sent {} packets", num_ping);
+                        break;
                     }
-                    // Build UDP echo packet
-                    payload.seq = self.internal_couter;
-                    payload.send_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-                    let echo_packet = bincode::serialize(&payload)?;
-                    self.socket.send_to(&echo_packet, (self.dst_addr, self.dst_port)).await?;
-                    self.internal_couter += 1;
-                },
-                Ok((len, _recv_addr)) = self.socket.recv_from(&mut buf) => {
-                    // Deserialize the packet
-                    let recv_packet: UdpEchoPacket = bincode::deserialize(&buf[..len])?;
-
-                    // Puplate the result
-
-                    let recv_timestamp= SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-                    let rtt = ((recv_timestamp - recv_packet.send_timestamp) as f64)/1e6;
-                    let result = UDPEchoResult {
-                        recv_timestamp,
-
-                        seq: recv_packet.seq,
-                        send_timestamp: recv_packet.send_timestamp,
-                        server_timestamp: recv_packet.recv_timestamp,
-                        rtt: rtt,
-                        size: len,
-                        src_addr: self.src_addr.to_string(),
-                        dst_addr: self.dst_addr.to_string(),
-                    };
-                    recv_counter += 1;
-                    self.rtt_stats.update(rtt);
-
-               if self.logger.is_some() {
-                   // Safety: Safe to unwrap because the file is some
-                   self.logger.as_mut().unwrap().log(&result).await?;
-               }
-               else{
-                 // Print regular ping output
-                        println!("{} bytes from {}: udp_pay_seq={} time={:.3} ms", len, result.src_addr, result.seq, result.rtt);
-               }
-                },
-                _ = recv_stop.recv() => {
-                    break;
-                },
-                _= signal::ctrl_c() => {
-                    // Print on a new line, because some terminals will print "^C" in which makes the text look ugly
-                    println!("\nCtrl-C received, exiting");
-                    break
                 }
+                _ = pacing_timer.tick().await;
+                payload.seq = send_seq as u128;
+                payload.send_timestamp =
+                    std::time::Duration::from(nix::time::clock_gettime(
+                        nix::time::ClockId::CLOCK_MONOTONIC,
+                    )?)
+                    .as_nanos() as u128;
+                let encoded_packet = bincode::serialize(&payload)?;
+                tx.send(encoded_packet.as_slice()).await?;
+                send_seq = send_seq + 1;
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let mut logger = self.logger.take();
+        let log = self.common.log.take().unwrap();
+        let recv_task = tokio::spawn(async move {
+            let mut stats = Statistics::new();
+            let mut result = UDPEchoResult {
+                seq: 0,
+                rtt: 0.0,
+                send_timestamp: 0,
+                recv_timestamp: 0,
+                server_timestamp: 0,
+                src_addr: src_addr.to_string(),
+                dst_addr: dst_addr.to_string(),
+                size: 0,
+            };
+
+            let (log_writer, mut log_reader) =
+                tokio::sync::mpsc::channel::<UDPEchoResult>(10000);
+            let mut time = 0;
+            let mut stat_piat = Statistics::new();
+            tokio::spawn(async move {
+                while let Some(result) = log_reader.recv().await {
+                    if recv_counter == 0 {
+                        time = result.recv_timestamp;
+                    } else {
+                        let diff = (result.recv_timestamp - time) / 1000000;
+                        stat_piat.update(diff as f64);
+                        time = result.recv_timestamp;
+                    }
+                    stats.update(result.rtt);
+                    if logger.is_some() {
+                        logger.as_mut().unwrap().log(&result).await?;
+                        if recv_counter % 100 == 0 {
+                            println!("RTT: {}", stats);
+                            println!("PIAT: {}", stat_piat);
+                        }
+                    } else if log {
+                        println!(
+                            "{} bytes from {}: tcp_pay_seq={} time={:.3} ms ",
+                            result.size,
+                            result.src_addr,
+                            result.seq,
+                            result.rtt,
+                        );
+                    } else {
+                        if recv_counter % 100 == 0 {
+                            println!("RTT: {}", stats);
+                            println!("PIAT: {}", stat_piat);
+                        }
+                    }
+                    recv_counter += 1;
+                }
+                Ok::<(), anyhow::Error>(())
+            });
+            let mut buf = [0u8; u16::MAX as usize];
+            while let Ok(len) = rx.recv(&mut buf).await {
+                let recv_timestamp =
+                    std::time::Duration::from(nix::time::clock_gettime(
+                        nix::time::ClockId::CLOCK_MONOTONIC,
+                    )?)
+                    .as_nanos() as u128;
+                let decoded_packet: UdpEchoPacket =
+                    bincode::deserialize(&buf[..len])?;
+                // Get the current socket stats
+
+                let send_timestamp = decoded_packet.send_timestamp;
+                let seq = decoded_packet.seq;
+                let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
+
+                result.seq = seq;
+                result.rtt = rtt;
+                result.send_timestamp = send_timestamp;
+                result.recv_timestamp = recv_timestamp;
+                result.server_timestamp = decoded_packet.recv_timestamp;
+                result.size = len as usize;
+
+                log_writer.send(result.clone()).await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        tokio::select! {
+            _ = send_task => {
+                println!("Send stop");
+                if recv_counter < send_seq {
+                    println!("Sent {} packets, but only received {} packets", send_seq, recv_counter);
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                }
+            },
+            failure = recv_task => {
+                panic!("Recv task failed: {:?}", failure);
 
             }
         }
-        println!("{}", self.rtt_stats);
+
         Ok(())
     }
 }

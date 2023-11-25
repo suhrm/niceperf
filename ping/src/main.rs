@@ -4,10 +4,8 @@ use clap::Parser;
 mod args;
 mod icmp;
 mod logger;
-mod non_async;
 mod tcp;
 mod udp;
-mod ping_client;
 use anyhow::Result;
 use eframe::egui;
 use egui::{Pos2, RawInput, Ui};
@@ -21,7 +19,7 @@ async fn main() -> Result<()> {
         args::Modes::Client { proto } => {
             match proto {
                 args::Protocol::Tcp(opts) => {
-                    let client = tcp::TCPClient::new(opts)?;
+                    let mut client = tcp::TCPClient::new(opts)?;
                     client.run().await?;
                 }
                 args::Protocol::Udp(opts) => {
