@@ -1,4 +1,8 @@
-use std::net::IpAddr;
+use std::{
+    net::IpAddr,
+    sync::{atomic::AtomicU64, Arc},
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use common::{interface_to_ipaddr, ICMPSocket, Logger, Statistics};
@@ -97,8 +101,8 @@ impl ICMPClient {
         }
 
         // Recv counter
-        let mut send_seq: u128 = 0;
-        let mut recv_counter: u128 = 0;
+        let recv_counter = Arc::new(AtomicU64::new(0));
+        let send_counter = Arc::new(AtomicU64::new(0));
         let interval = self.common.interval.unwrap();
         let num_ping = self.common.count.take();
         let identifier = self.identifier;
@@ -109,49 +113,56 @@ impl ICMPClient {
         let mut rx =
             common::AsyncICMPSocket::new(ICMPSocket::from_raw_socket(socket)?)?;
 
+        let send_seq = send_counter.clone();
         let send_task = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             let mut pacing_timer = tokio::time::interval(
                 std::time::Duration::from_millis(interval),
             );
             loop {
-                if let Some(num_ping) = num_ping {
-                    if send_seq > num_ping as u128 {
-                        println!("Sent {} packets", num_ping);
-                        break;
+                {
+                    let send_seq = send_seq
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                        as u128;
+                    if let Some(num_ping) = num_ping {
+                        if send_seq >= num_ping.into() {
+                            break;
+                        }
                     }
-                }
-                _ = pacing_timer.tick().await;
-                let send_timestamp =
-                    std::time::Duration::from(nix::time::clock_gettime(
-                        nix::time::ClockId::CLOCK_MONOTONIC,
-                    )?)
-                    .as_nanos() as u128;
-                payload[..16].copy_from_slice(&send_timestamp.to_be_bytes());
-                payload[16..32].copy_from_slice(&send_seq.to_be_bytes());
-                let icmp_packet = {
-                    [
-                        Icmpv4Header::with_checksum(
-                            Icmpv4Type::EchoRequest(IcmpEchoHeader {
-                                id: identifier,       // Identifier
-                                seq: send_seq as u16, // Sequence number
-                            }),
-                            payload.as_slice(), // Payload for checksum
-                        )
-                        .to_bytes()
-                        .as_slice(),
-                        payload.as_slice(),
-                    ]
-                    .concat() // Concatenate header and payload
-                };
+                    _ = pacing_timer.tick().await;
+                    let send_timestamp =
+                        std::time::Duration::from(nix::time::clock_gettime(
+                            nix::time::ClockId::CLOCK_MONOTONIC,
+                        )?)
+                        .as_nanos() as u128;
+                    payload[..16]
+                        .copy_from_slice(&send_timestamp.to_be_bytes());
+                    payload[16..32].copy_from_slice(&send_seq.to_be_bytes());
+                    let icmp_packet = {
+                        [
+                            Icmpv4Header::with_checksum(
+                                Icmpv4Type::EchoRequest(IcmpEchoHeader {
+                                    id: identifier,       // Identifier
+                                    seq: send_seq as u16, // Sequence number
+                                }),
+                                payload.as_slice(), // Payload for checksum
+                            )
+                            .to_bytes()
+                            .as_slice(),
+                            payload.as_slice(),
+                        ]
+                        .concat() // Concatenate header and payload
+                    };
 
-                tx.send(&icmp_packet).await?;
-                send_seq = send_seq + 1;
+                    tx.send(&icmp_packet).await?;
+                }
+                send_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             Ok::<(), anyhow::Error>(())
         });
         let mut logger = self.logger.take();
         let log = self.common.log.take().unwrap();
+        let recv_count = recv_counter.clone();
         let recv_task = tokio::spawn(async move {
             let mut stats = Statistics::new();
             let mut result = PingResult {
@@ -172,7 +183,8 @@ impl ICMPClient {
             let mut stat_piat = Statistics::new();
             tokio::spawn(async move {
                 while let Some(result) = log_reader.recv().await {
-                    if recv_counter == 0 {
+                    if recv_count.load(std::sync::atomic::Ordering::SeqCst) == 0
+                    {
                         time = result.recv_timestamp;
                     } else {
                         let diff = (result.recv_timestamp - time) / 1000000;
@@ -182,7 +194,10 @@ impl ICMPClient {
                     stats.update(result.rtt);
                     if logger.is_some() {
                         logger.as_mut().unwrap().log(&result).await?;
-                        if recv_counter % 100 == 0 {
+                        if recv_count.load(std::sync::atomic::Ordering::SeqCst)
+                            % 100
+                            == 0
+                        {
                             println!("RTT: {}", stats);
                             println!("PIAT: {}", stat_piat);
                         }
@@ -195,12 +210,16 @@ impl ICMPClient {
                             result.rtt,
                         );
                     } else {
-                        if recv_counter % 100 == 0 {
+                        if recv_count.load(std::sync::atomic::Ordering::SeqCst)
+                            % 100
+                            == 0
+                        {
                             println!("RTT: {}", stats);
                             println!("PIAT: {}", stat_piat);
                         }
                     }
-                    recv_counter += 1;
+                    recv_count
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 }
                 Ok::<(), anyhow::Error>(())
             });
@@ -229,8 +248,6 @@ impl ICMPClient {
                     }
                 };
 
-                recv_counter += 1;
-
                 let reply_payload = icmp_header.1;
                 result.send_timestamp =
                     u128::from_be_bytes(reply_payload[..16].try_into()?);
@@ -252,10 +269,11 @@ impl ICMPClient {
         });
         tokio::select! {
             _ = send_task => {
-                println!("Send stop");
-                if recv_counter < send_seq {
-                    println!("Sent {} packets, but only received {} packets", send_seq, recv_counter);
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if recv_counter.load(std::sync::atomic::Ordering::SeqCst) < send_counter.load(std::sync::atomic::Ordering::SeqCst) {
+                    println!("Sent {} packets, but only received {} packets", send_counter.load(std::sync::atomic::Ordering::SeqCst), recv_counter.load(std::sync::atomic::Ordering::SeqCst));
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
             },
             failure = recv_task => {

@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    sync::{atomic::AtomicU64, Arc},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -118,12 +119,12 @@ impl TCPClient {
         let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
 
         // Recv counter
-        let mut recv_counter = 0;
-        let mut send_seq = 0;
+        let recv_counter = Arc::new(AtomicU64::new(0));
+        let send_counter = Arc::new(AtomicU64::new(0));
         let (_send_stop, _recv_stop) = tokio::sync::mpsc::channel::<()>(1);
         let interval = self.common.interval.unwrap();
         let num_ping = self.common.count.take();
-
+        let send_seq = send_counter.clone();
         let send_task = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let mut pacing_timer = tokio::time::interval(
@@ -131,13 +132,15 @@ impl TCPClient {
             );
             loop {
                 if let Some(num_ping) = num_ping {
-                    if send_seq > num_ping {
-                        println!("Sent {} packets", num_ping);
+                    if send_seq.load(std::sync::atomic::Ordering::SeqCst)
+                        >= num_ping
+                    {
                         break;
                     }
                 }
                 _ = pacing_timer.tick().await;
-                payload.seq = send_seq as u128;
+                payload.seq =
+                    send_seq.load(std::sync::atomic::Ordering::SeqCst) as u128;
                 payload.send_timestamp =
                     std::time::Duration::from(nix::time::clock_gettime(
                         nix::time::ClockId::CLOCK_MONOTONIC,
@@ -145,7 +148,7 @@ impl TCPClient {
                     .as_nanos() as u128;
                 let encoded_packet = bincode::serialize(&payload)?;
                 tx.send(encoded_packet.into()).await?;
-                send_seq = send_seq + 1;
+                send_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             Ok::<(), anyhow::Error>(())
         });
@@ -155,6 +158,7 @@ impl TCPClient {
         let log = self.common.log.take().unwrap();
         let raw_socket =
             TCPSocket::from_raw_socket(self.socket.get_ref().try_clone()?)?;
+        let recv_count = recv_counter.clone();
         let recv_task = tokio::spawn(async move {
             let mut stats = Statistics::new();
             let mut result = TCPEchoResult {
@@ -176,7 +180,8 @@ impl TCPClient {
             let mut stat_piat = Statistics::new();
             tokio::spawn(async move {
                 while let Some(result) = log_reader.recv().await {
-                    if recv_counter == 0 {
+                    if recv_count.load(std::sync::atomic::Ordering::SeqCst) == 0
+                    {
                         time = result.recv_timestamp;
                     } else {
                         let diff = (result.recv_timestamp - time) / 1000000;
@@ -186,7 +191,10 @@ impl TCPClient {
                     stats.update(result.rtt);
                     if logger.is_some() {
                         logger.as_mut().unwrap().log(&result).await?;
-                        if recv_counter % 100 == 0 {
+                        if recv_count.load(std::sync::atomic::Ordering::SeqCst)
+                            % 100
+                            == 0
+                        {
                             println!("RTT: {}", stats);
                             println!("PIAT: {}", stat_piat);
                         }
@@ -201,12 +209,16 @@ impl TCPClient {
                             result.retrans
                         );
                     } else {
-                        if recv_counter % 100 == 0 {
+                        if recv_count.load(std::sync::atomic::Ordering::SeqCst)
+                            % 100
+                            == 0
+                        {
                             println!("RTT: {}", stats);
                             println!("PIAT: {}", stat_piat);
                         }
                     }
-                    recv_counter += 1;
+                    recv_count
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 }
                 Ok::<(), anyhow::Error>(())
             });
@@ -241,9 +253,9 @@ impl TCPClient {
 
         tokio::select! {
             _ = send_task => {
-                println!("Send stop");
-                if recv_counter < send_seq {
-                    println!("Sent {} packets, but only received {} packets", send_seq, recv_counter);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if recv_counter.load(std::sync::atomic::Ordering::SeqCst) < send_counter.load(std::sync::atomic::Ordering::SeqCst) {
+                    println!("Sent {} packets, but only received {} packets", send_counter.load(std::sync::atomic::Ordering::SeqCst), recv_counter.load(std::sync::atomic::Ordering::SeqCst));
                     tokio::time::sleep(Duration::from_secs(10)).await;
                 }
             },

@@ -54,7 +54,7 @@ def test_tcp():
             pass
 
         log.info(res.stdout)
-        res.match(stdout="*seq=9*", stderr=None)
+        res.match(stdout="*seq=1000*", stderr=None)
 
     finally:
         net.cleanup()
@@ -97,7 +97,7 @@ def test_tcp_timeout():
             pass
 
         log.info(res.stdout)
-        res.match(stdout="*seq=9*", stderr=None)
+        res.match(stdout="*seq=1000*", stderr=None)
 
     finally:
         net.cleanup()
