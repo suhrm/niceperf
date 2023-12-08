@@ -21,4 +21,4 @@ jobs:
     - name: Build
       run: cargo lbuild
     - name: Run tests
-      run: cargo ltest -- --nocapture
+      run: sudo -E cargo ltest -- --nocapture
