@@ -63,7 +63,7 @@ impl<T: Latency> ConnRunner<T> {
     }
 
     pub async fn run(&mut self) {
-        let mut sndbuf = [0u8; u16::MAX as usize];
+        let _sndbuf = [0u8; u16::MAX as usize];
         let mut recvbuf = [0u8; u16::MAX as usize];
 
         loop {

@@ -64,21 +64,26 @@ pub struct CommonOpts {
     /// Set the amount of packets to preload before following the interval
     #[arg(long, default_value = "1")]
     pub preload: Option<u64>,
+    /// Set whether to log or not
+    #[arg(long, default_value = "true", conflicts_with = "file")]
+    pub log: Option<bool>,
+    /// Set the destination address
+    #[arg(long)]
+    pub dst_addr: IpAddr,
+    /// Set the source address
+    #[arg(long, conflicts_with = "iface")]
+    pub src_addr: Option<IpAddr>,
 }
 #[derive(Args, Clone, Debug)]
 pub struct TCPOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
-    // TODO: Same as with UDP, do we need the source port and address?
-    /// Set the source port
-    // #[arg(long)]
-    // pub src_port: Option<u16>,
     /// Set the destination port
     #[arg(long)]
     pub dst_port: u16,
-    /// Set the destination address
+    /// Set the source port
     #[arg(long)]
-    pub dst_addr: IpAddr,
+    pub src_port: Option<u16>,
     /// Congetion control algorithm to use
     #[arg(long, default_value = "reno")]
     pub cc: Option<String>,
@@ -91,22 +96,15 @@ pub struct TCPOpts {
 pub struct UDPOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
-    // TODO: is Src Port needed?
-    /* /// Set the source port
-    #[arg(long, short)]
-    pub src_port: Option<u16>, */
     /// Set the destination port
     #[arg(long)]
     pub dst_port: u16,
-    /// Set the destination address
+    /// Set the source port
     #[arg(long)]
-    pub dst_addr: IpAddr,
+    pub src_port: Option<u16>,
 }
 #[derive(Args, Clone, Debug)]
 pub struct ICMPOpts {
     #[command(flatten)]
     pub common_opts: CommonOpts,
-    /// Set the destination address
-    #[arg(long)]
-    pub dst_addr: IpAddr,
 }

@@ -16,3 +16,5 @@ rcgen = "0.10.0"
 quinn = {git = "https://github.com/suhrm/quinn.git", branch = "main"}
 rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 logging-macro = {path = "../logging-derive"}
+linux-raw-sys = { version = "0.6.1", features = ["net"] }
+

@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use linux_raw_sys::net::tcp_info;
 use pnet_datalink;
 use quinn::{ClientConfig, ServerConfig, VarInt};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -17,6 +18,30 @@ use tokio::io::unix::AsyncFd;
 pub struct ICMPSocket(Socket);
 
 impl ICMPSocket {
+    pub fn from_raw_socket(socket: Socket) -> Result<Self> {
+        unsafe {
+            let sock_fd = socket.as_raw_fd();
+            let opt_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            let mut sock_type = libc::SOCK_RAW;
+            let ret = libc::getsockopt(
+                sock_fd,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                &mut sock_type as *mut _ as *mut libc::c_void,
+                &opt_len as *const _ as *mut libc::socklen_t,
+            );
+            if ret == -1 {
+                Err(anyhow!(
+                    "Unable to get socket type: Errno  {}",
+                    nix::errno::Errno::last()
+                ))
+            } else if sock_type != libc::SOCK_RAW {
+                Err(anyhow!("Socket is not a RAW socket"))
+            } else {
+                Ok(Self(socket))
+            }
+        }
+    }
     pub fn new(
         bind_interface: Option<&str>,
         bind_address: Option<IpAddr>,
@@ -77,6 +102,13 @@ impl ICMPSocket {
     pub fn get_ref(&self) -> &Socket {
         &self.0
     }
+    /// Connect to the provided address allows to use send and recv instead of
+    /// send_to and recv_from
+    pub fn connect(&self, addr: IpAddr) -> Result<()> {
+        let addr = SocketAddr::new(addr, 0);
+        self.0.connect(&addr.into())?;
+        Ok(())
+    }
 }
 
 impl AsRawFd for ICMPSocket {
@@ -119,6 +151,13 @@ impl AsyncICMPSocket {
         match guard
             .try_io(|inner| inner.get_ref().get_ref().send_to(packet, &addr))
         {
+            Ok(res) => Ok(res?),
+            Err(_e) => Err(anyhow!("Error sending packet")),
+        }
+    }
+    pub async fn send(&mut self, packet: &[u8]) -> Result<usize> {
+        let mut guard = self.inner.writable().await?;
+        match guard.try_io(|inner| inner.get_ref().get_ref().send(packet)) {
             Ok(res) => Ok(res?),
             Err(_e) => Err(anyhow!("Error sending packet")),
         }
@@ -224,10 +263,13 @@ impl UDPSocket {
         self.0.connect(&addr.into())?;
         Ok(())
     }
+    pub fn bind(&self, addr: SocketAddr) -> Result<()> {
+        self.0.bind(&addr.into())?;
+        Ok(())
+    }
 }
 
 // Create new TCP socket
-
 pub struct TCPSocket(Socket);
 
 impl TCPSocket {
@@ -308,6 +350,7 @@ impl TCPSocket {
         }
         // Set TCP_NODELAY
         socket.set_nodelay(true)?;
+        socket.set_quickack(true)?; // Enable quickack
 
         // Set the congestion control algorithm if provided
         // otherwise use the default OS algorithm
@@ -328,6 +371,33 @@ impl TCPSocket {
         }
 
         Ok(TCPSocket(socket))
+    }
+    /// Create a new TCPSocket from a raw socket2::Socket
+    /// Safety: We are sure that the socket is a TCP socket or we return an
+    /// error otherwise
+    pub fn from_raw_socket(socket: Socket) -> Result<Self> {
+        unsafe {
+            let sock_fd = socket.as_raw_fd();
+            let opt_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            let mut sock_type = libc::SOCK_STREAM;
+            let ret = libc::getsockopt(
+                sock_fd,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                &mut sock_type as *mut _ as *mut libc::c_void,
+                &opt_len as *const _ as *mut libc::socklen_t,
+            );
+            if ret == -1 {
+                Err(anyhow!(
+                    "Unable to get socket type: Errno  {}",
+                    nix::errno::Errno::last()
+                ))
+            } else if sock_type != libc::SOCK_STREAM {
+                Err(anyhow!("Socket is not a TCP socket"))
+            } else {
+                Ok(Self(socket))
+            }
+        }
     }
     pub fn get_mut(&mut self) -> &mut Socket {
         &mut self.0
@@ -350,6 +420,25 @@ impl TCPSocket {
     pub fn listen(&mut self, backlog: i32) -> Result<()> {
         self.0.listen(backlog)?;
         Ok(())
+    }
+
+    pub fn get_stats(&self) -> Result<tcp_info> {
+        unsafe {
+            let mut tcp_info: tcp_info = std::mem::zeroed();
+            let mut len = std::mem::size_of::<tcp_info>() as u32;
+            let ret = libc::getsockopt(
+                self.0.as_raw_fd(),
+                libc::SOL_TCP,
+                libc::TCP_INFO,
+                &mut tcp_info as *mut _ as *mut libc::c_void,
+                &mut len as *mut _ as *mut libc::socklen_t,
+            );
+            if ret == -1 {
+                Err(anyhow!("Failed to get TCP info"))
+            } else {
+                Ok(tcp_info)
+            }
+        }
     }
 }
 

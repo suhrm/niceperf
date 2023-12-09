@@ -1,60 +1,58 @@
 use std::{
-    borrow::{Borrow, BorrowMut},
-    cell::{Cell, RefCell},
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    ops::{Add, Deref, DerefMut},
-    rc::Rc,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{atomic::AtomicU64, Arc},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
 use common::{interface_to_ipaddr, Logger, Statistics, TCPSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream},
-    signal,
+use tokio::net::{
+    TcpListener as TokioTcpListener, TcpStream as TokioTcpStream,
 };
-use tokio_util::codec::{
-    FramedParts, FramedRead, FramedWrite, LengthDelimitedCodec,
-};
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use crate::{
-    args,
-    logger::{PingResult, TCPEchoResult},
-};
+use crate::{args, logger::TCPEchoResult};
 
 pub struct TCPClient {
     common: args::CommonOpts,
     socket: common::TCPSocket,
     src_addr: IpAddr,
     dst_addr: IpAddr,
-    internal_couter: Rc<u128>,
     identifier: u16,
     src_port: Option<u16>,
     dst_port: u16,
     logger: Option<Logger<TCPEchoResult>>,
     cc: String,
-    rtt_stats: Statistics,
 }
 
 impl TCPClient {
     pub fn new(args: args::TCPOpts) -> Result<TCPClient> {
-        let iface = args
-            .common_opts
-            .iface
-            .clone()
-            .ok_or(anyhow!("No interface specified"))?;
-        let iface = iface.as_str();
-        let src_addr = interface_to_ipaddr(iface)?;
-        let dst_addr = args.dst_addr;
+        let iface = match args.common_opts.iface.clone() {
+            Some(iface) => Some(iface),
+            None => None,
+        };
+        let src_addr = match args.common_opts.src_addr {
+            Some(addr) => addr,
+            None => interface_to_ipaddr(iface.as_ref().unwrap())?,
+        };
+
+        let src_port = match args.src_port {
+            Some(port) => port,
+            None => 0,
+        };
+
+        let dst_addr = args.common_opts.dst_addr;
         let dst_port = args.dst_port;
 
-        let mut socket =
-            TCPSocket::new(Some(iface), None, args.mss, args.cc.clone())?;
+        let mut socket = TCPSocket::new(
+            iface.as_deref(),
+            Some((src_addr, src_port)),
+            args.mss,
+            args.cc.clone(),
+        )?;
         println!("Trying to connect to {}...", dst_addr);
         socket.connect(SocketAddr::new(dst_addr, dst_port))?;
         println!("Connected to {}", dst_addr);
@@ -67,7 +65,6 @@ impl TCPClient {
             socket,
             src_addr,
             dst_addr,
-            internal_couter: Rc::new(0),
             identifier: rand::random::<u16>(),
             src_port: None,
             dst_port,
@@ -75,7 +72,6 @@ impl TCPClient {
             common: args.common_opts,
             // Safety we have a default value
             cc: args.cc.unwrap(),
-            rtt_stats: Statistics::new(),
         })
     }
     pub async fn run(&mut self) -> Result<()> {
@@ -91,8 +87,6 @@ impl TCPClient {
                 return Err(anyhow!("IPv6 is not supported yet"));
             }
         };
-
-        let _buf = [0u8; 1500];
 
         // Safety: Safe to unwrap because we have a default value
         println!(
@@ -115,7 +109,7 @@ impl TCPClient {
         };
 
         // Convert to tokio TcpStream
-        let mut socket = TokioTcpStream::from_std(
+        let socket = TokioTcpStream::from_std(
             self.socket.get_ref().try_clone()?.try_into()?,
         )?;
 
@@ -125,41 +119,47 @@ impl TCPClient {
         let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
 
         // Recv counter
-        let mut recv_counter = 0;
-        let mut send_seq = 0;
-        let (send_stop, mut recv_stop) = tokio::sync::mpsc::channel::<()>(1);
-        let mut timeout_started = false;
+        let recv_counter = Arc::new(AtomicU64::new(0));
+        let send_counter = Arc::new(AtomicU64::new(0));
+        let (_send_stop, _recv_stop) = tokio::sync::mpsc::channel::<()>(1);
         let interval = self.common.interval.unwrap();
-
         let num_ping = self.common.count.take();
-
-        let send_task = tokio::task::spawn_local(async move {
+        let send_seq = send_counter.clone();
+        let send_task = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let mut pacing_timer = tokio::time::interval(
                 std::time::Duration::from_millis(interval),
             );
             loop {
                 if let Some(num_ping) = num_ping {
-                    if send_seq > num_ping {
-                        println!("Sent {} packets", num_ping);
+                    if send_seq.load(std::sync::atomic::Ordering::SeqCst)
+                        >= num_ping
+                    {
                         break;
                     }
                 }
                 _ = pacing_timer.tick().await;
-                payload.seq = send_seq as u128;
+                payload.seq =
+                    send_seq.load(std::sync::atomic::Ordering::SeqCst) as u128;
                 payload.send_timestamp =
-                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-                        as u128;
+                    std::time::Duration::from(nix::time::clock_gettime(
+                        nix::time::ClockId::CLOCK_MONOTONIC,
+                    )?)
+                    .as_nanos() as u128;
                 let encoded_packet = bincode::serialize(&payload)?;
                 tx.send(encoded_packet.into()).await?;
-                send_seq = send_seq + 1;
+                send_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             Ok::<(), anyhow::Error>(())
         });
 
         let cc = self.cc.clone();
         let mut logger = self.logger.take();
-        let recv_task = tokio::task::spawn_local(async move {
+        let log = self.common.log.take().unwrap();
+        let raw_socket =
+            TCPSocket::from_raw_socket(self.socket.get_ref().try_clone()?)?;
+        let recv_count = recv_counter.clone();
+        let recv_task = tokio::spawn(async move {
             let mut stats = Statistics::new();
             let mut result = TCPEchoResult {
                 seq: 0,
@@ -171,13 +171,69 @@ impl TCPClient {
                 dst_addr: dst_addr.to_string(),
                 cc: cc.clone(),
                 size: 0,
+                retrans: 0,
             };
+
+            let (log_writer, mut log_reader) =
+                tokio::sync::mpsc::channel::<TCPEchoResult>(10000);
+            let mut time = 0;
+            let mut stat_piat = Statistics::new();
+            tokio::spawn(async move {
+                while let Some(result) = log_reader.recv().await {
+                    if recv_count.load(std::sync::atomic::Ordering::SeqCst) == 0
+                    {
+                        time = result.recv_timestamp;
+                    } else {
+                        let diff = (result.recv_timestamp - time) / 1000000;
+                        stat_piat.update(diff as f64);
+                        time = result.recv_timestamp;
+                    }
+                    stats.update(result.rtt);
+                    if logger.is_some() {
+                        logger.as_mut().unwrap().log(&result).await?;
+                        if recv_count.load(std::sync::atomic::Ordering::SeqCst)
+                            % 100
+                            == 0
+                        {
+                            println!("RTT: {}", stats);
+                            println!("PIAT: {}", stat_piat);
+                        }
+                    } else if log {
+                        println!(
+                            "{} bytes from {}: tcp_pay_seq={} time={:.3} ms \
+                             retrans={}",
+                            result.size,
+                            result.src_addr,
+                            result.seq,
+                            result.rtt,
+                            result.retrans
+                        );
+                    } else {
+                        if recv_count.load(std::sync::atomic::Ordering::SeqCst)
+                            % 100
+                            == 0
+                        {
+                            println!("RTT: {}", stats);
+                            println!("PIAT: {}", stat_piat);
+                        }
+                    }
+                    recv_count
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                Ok::<(), anyhow::Error>(())
+            });
+
             while let Some(Ok(frame)) = rx.next().await {
-                let recv_timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)?
+                let recv_timestamp =
+                    std::time::Duration::from(nix::time::clock_gettime(
+                        nix::time::ClockId::CLOCK_MONOTONIC,
+                    )?)
                     .as_nanos() as u128;
                 let decoded_packet: TcpEchoPacket =
                     bincode::deserialize(&frame)?;
+                // Get the current socket stats
+                let stats = raw_socket.get_stats()?;
+
                 let send_timestamp = decoded_packet.send_timestamp;
                 let seq = decoded_packet.seq;
                 let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
@@ -188,39 +244,24 @@ impl TCPClient {
                 result.recv_timestamp = recv_timestamp;
                 result.server_timestamp = decoded_packet.recv_timestamp;
                 result.size = frame.len() as usize;
+                result.retrans = stats.tcpi_total_retrans as u32;
 
-                recv_counter += 1;
-                stats.update(rtt);
-                if logger.is_some() {
-                    logger.as_mut().unwrap().log(&result).await?;
-                    if recv_counter % 100 == 0 {
-                        println!("{}", stats);
-                    }
-                } else {
-                    println!(
-                        "{} bytes from {}: tcp_pay_seq={} time={:.3} ms",
-                        result.size, result.src_addr, result.seq, result.rtt
-                    );
-                }
+                log_writer.send(result.clone()).await?;
             }
             Ok::<(), anyhow::Error>(())
         });
 
         tokio::select! {
             _ = send_task => {
-                println!("Send stop");
-                if recv_counter < send_seq {
-                    println!("Sent {} packets, but only received {} packets", send_seq, recv_counter);
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_secs(10)).await;
-                        send_stop.send(()).await?;
-                        Ok::<(), anyhow::Error>(())
-                    }
-                    ).await??;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if recv_counter.load(std::sync::atomic::Ordering::SeqCst) < send_counter.load(std::sync::atomic::Ordering::SeqCst) {
+                    println!("Sent {} packets, but only received {} packets", send_counter.load(std::sync::atomic::Ordering::SeqCst), recv_counter.load(std::sync::atomic::Ordering::SeqCst));
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
             },
-            _ = recv_stop.recv() => {
-                println!("Recv stop");
+            failure = recv_task => {
+                panic!("Recv task failed: {:?}", failure);
+
             }
         }
 
@@ -247,7 +288,7 @@ pub struct TCPServer {
 
 impl TCPServer {
     pub fn new(args: args::TCPOpts) -> Result<TCPServer> {
-        let dst_addr = args.dst_addr;
+        let dst_addr = args.common_opts.dst_addr;
         let dst_port = args.dst_port;
 
         let mut socket = TCPSocket::new(
@@ -277,7 +318,7 @@ impl TCPServer {
             println!("Waiting for connection");
             if let Ok((stream, addr)) = self.socket.accept().await {
                 println!("Got connection from {}", addr);
-                tokio::task::spawn_local(async move {
+                tokio::spawn(async move {
                     Self::client_handler(stream).await.unwrap();
                 })
                 .await?;
@@ -289,23 +330,37 @@ impl TCPServer {
         let (rx, tx) = stream.split();
         let mut rx = FramedRead::new(rx, LengthDelimitedCodec::new());
         let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        let mut stats = Statistics::new();
+        let mut recv_counter = 0;
+        let mut time = Instant::now();
 
         loop {
             tokio::select! {
                 Some(Ok(frame)) = rx.next() => {
+                if recv_counter == 0 {
+                    time = Instant::now();
+                } else {
+                    stats.update(time.elapsed().as_millis() as f64);
+                    time = Instant::now();
+                }
                 let mut decoded_packet: TcpEchoPacket =
                     bincode::deserialize(&frame).unwrap();
-                let recv_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-                        as u128;
+                let recv_timestamp =
+                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+                                    as u128;
                 decoded_packet.recv_timestamp = recv_timestamp;
                 let encoded_packet = bincode::serialize(&decoded_packet)?;
                 tx.send(encoded_packet.into()).await?;
+                if (recv_counter % 100) == 0 {
+                    println!("{}", stats);
 
+                }
+                recv_counter += 1;
                 },
                 else => {
+                    println!("Client disconnected");
                     break;
                 }
-
             }
         }
         Ok(())

@@ -270,7 +270,7 @@ impl TestRunner<Ready> {
         ));
         let packet_size = cfg.common_opts.len.unwrap();
         assert!(packet_size <= u16::MAX as usize);
-        let mut sndbuf = [0u8; u16::MAX as usize];
+        let sndbuf = [0u8; u16::MAX as usize];
         let mut recvbuf = [0u8; u16::MAX as usize];
 
         loop {
@@ -306,10 +306,10 @@ impl TestRunner<NotReady> {
             Side::Client => {
                 match msg {
                     protocol::MessageType::Handshake(_) => Ok(()),
-                    protocol::MessageType::NewTest(id, config) => {
+                    protocol::MessageType::NewTest(_id, _config) => {
                         todo!()
                     }
-                    protocol::MessageType::Error(err) => {
+                    protocol::MessageType::Error(_err) => {
                         Err(anyhow!("Got err from server"))?
                     }
                 }
@@ -326,10 +326,10 @@ impl TestRunner<Ready> {
             Side::Client => {
                 match msg {
                     protocol::MessageType::Handshake(_) => Ok(()),
-                    protocol::MessageType::NewTest(id, config) => {
+                    protocol::MessageType::NewTest(_id, _config) => {
                         todo!()
                     }
-                    protocol::MessageType::Error(err) => {
+                    protocol::MessageType::Error(_err) => {
                         Err(anyhow!("Got err from server"))?
                     }
                 }
