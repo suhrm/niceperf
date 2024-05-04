@@ -13,8 +13,12 @@ fn main() -> Result<()> {
         }
         args::Modes::Client { proto } => {
             match proto {
-                args::Protocol::Tcp(_) => todo!(),
-                args::Protocol::Udp(_) => todo!(),
+                args::Protocol::Tcp(opts) => {
+                    dbg!(opts);
+                }
+                args::Protocol::Udp(opts) => {
+                    dbg!(opts);
+                }
             }
         }
     }

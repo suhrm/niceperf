@@ -29,11 +29,28 @@ pub enum Modes {
     },
 }
 #[derive(Clone, Debug)]
+enum TestDirection {
+    Server,
+    Client,
+    Bidirectional,
+}
+impl std::str::FromStr for TestDirection {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "server" => Ok(TestDirection::Server),
+            "client" => Ok(TestDirection::Client),
+            "bidi" | "bidirectional" => Ok(TestDirection::Bidirectional),
+            _ => Err(anyhow!("Invalid test direction")),
+        }
+    }
+}
+#[derive(Clone, Debug)]
 struct Bandwidth(u64);
 
 impl Into<u64> for Bandwidth {
     fn into(self) -> u64 {
-       self.0
+        self.0
     }
 }
 
@@ -66,16 +83,13 @@ pub struct CommonOpts {
     #[arg(long, short, default_value = "64")]
     pub len: Option<usize>,
     /// bandwidth target e.g. 1k, 1m, 1g
-    #[arg(long, default_value = "1m", value_parser = clap::value_parser!(Bandwidth))]
+    #[arg(long, value_parser = clap::value_parser!(Bandwidth))]
     pub bandwidth: Option<Bandwidth>,
-    /// number of packets to send
-    #[arg(long, short, conflicts_with = "duration")]
-    pub count: Option<u64>,
     #[arg(long, short)]
     /// Interface to bind to
     pub iface: Option<String>,
     /// Duration of the test in seconds (mutually exclusive with count)
-    #[arg(long, short, conflicts_with = "count")]
+    #[arg(long, short, default_value = "10")]
     pub duration: Option<u64>,
     /// Save the result to a file
     #[arg(long)]
@@ -89,6 +103,10 @@ pub struct CommonOpts {
     /// Set the source address
     #[arg(long, conflicts_with = "iface")]
     pub src_addr: Option<IpAddr>,
+
+    /// Direction of the test
+    #[arg(long, default_value = "server")]
+    pub direction: TestDirection,
 }
 #[derive(Args, Clone, Debug)]
 pub struct TCPOpts {
