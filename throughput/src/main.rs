@@ -1,45 +1,27 @@
-
+use anyhow::Result;
 use clap::Parser;
-
+use common::{QuicClient, QuicServer, TCPSocket};
 mod args;
-mod tcpserver;
-mod tcpclient;
-mod messages;
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let args = args::Opts::parse();
-
-    println!("{:?}", args);
-
-    return match args.mode {
-        Some(args::Modes::Server { proto }) => {
+fn main() -> Result<()> {
+    let opts: args::Opts = args::Opts::parse();
+    match opts.mode {
+        args::Modes::Server { proto } => {
             match proto {
-                args::ServerProtocol::Tcp(options) => {
-                    println!("Starting tcp server");
-                    tcpserver::run(options).await
-                },
-                args::ServerProtocol::Udp(..) => {
-                    todo!()
-                },
-                args::ServerProtocol::Quic(..) => {
-                    todo!()
-                }
+                args::Protocol::Tcp(_) => todo!(),
+                args::Protocol::Udp(_) => todo!(),
             }
-        },
-        Some(args::Modes::Client { proto }) => {
+        }
+        args::Modes::Client { proto } => {
             match proto {
-                args::ClientProtocol::Tcp(options) => {
-                    tcpclient::run(options).await
-                },
-                args::ClientProtocol::Udp(..) => {
-                    todo!()
-                },
-                args::ClientProtocol::Quic(..) => {
-                    todo!()
-                }
+                args::Protocol::Tcp(_) => todo!(),
+                args::Protocol::Udp(_) => todo!(),
             }
-        },
-        None => { Ok({}) }
-    };
+        }
+    }
+
+    Ok(())
 }
+// struct Client<T: Protocol> {
+//     ctrl_socket: TCPSocket,
+//     protocol: T,
+// }
