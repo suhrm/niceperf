@@ -10,3 +10,5 @@ latency/key.der
 **/*.txt
 **/*.pcap
 **/*.png
+trace.dat
+todo

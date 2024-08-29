@@ -21,6 +21,8 @@ pub struct ICMPClient {
     /// Destination IP address
     dst_addr: IpAddr,
     /// Internal counter for sequence number of ICMP packets (Not the same as
+
+
     /// ip sequence number)
     internal_couter: u128,
     /// Identifier of ICMP packets (This is random by default)
@@ -28,6 +30,7 @@ pub struct ICMPClient {
     /// Rtt statistics
     rtt_stats: Statistics,
 }
+    
 
 impl ICMPClient {
     pub fn new(args: args::ICMPOpts) -> Result<ICMPClient> {
