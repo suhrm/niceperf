@@ -9,7 +9,6 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use linux_raw_sys::net::tcp_info;
-use pnet_datalink;
 use quinn::{ClientConfig, ServerConfig, VarInt};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::unix::AsyncFd;
@@ -127,11 +126,7 @@ impl AsyncICMPSocket {
         })
     }
 
-    pub async fn send_to(
-        &mut self,
-        packet: &[u8],
-        addr: &IpAddr,
-    ) -> Result<usize> {
+    pub async fn send_to(&self, packet: &[u8], addr: &IpAddr) -> Result<usize> {
         let mut guard = self.inner.writable().await?;
         let addr = match addr {
             IpAddr::V4(addr) => {
@@ -155,7 +150,7 @@ impl AsyncICMPSocket {
             Err(_e) => Err(anyhow!("Error sending packet")),
         }
     }
-    pub async fn send(&mut self, packet: &[u8]) -> Result<usize> {
+    pub async fn send(&self, packet: &[u8]) -> Result<usize> {
         let mut guard = self.inner.writable().await?;
         match guard.try_io(|inner| inner.get_ref().get_ref().send(packet)) {
             Ok(res) => Ok(res?),
@@ -163,11 +158,16 @@ impl AsyncICMPSocket {
         }
     }
 
-    pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+    pub async fn read(&self, buf: &mut [u8]) -> Result<usize> {
         loop {
             let mut guard = self.inner.readable().await?;
             // Safety: We are sure that the buffer is initialized
-            let uninit_slice = unsafe { core::mem::transmute(&mut *buf) };
+            let uninit_slice = unsafe {
+                core::mem::transmute::<
+                    &mut [u8],
+                    &mut [std::mem::MaybeUninit<u8>],
+                >(&mut *buf)
+            };
 
             match guard
                 .try_io(|inner| inner.get_ref().get_ref().recv(uninit_slice))
@@ -342,11 +342,8 @@ impl TCPSocket {
         }
 
         // Set the maximum segment size
-        match maximum_segment_size {
-            Some(mss) => {
-                socket.set_mss(mss.into())?;
-            }
-            None => {}
+        if let Some(mss) = maximum_segment_size {
+            socket.set_mss(mss.into())?;
         }
         // Set TCP_NODELAY
         socket.set_nodelay(true)?;
@@ -531,7 +528,7 @@ pub fn init_venv() {
 /// Run integration tests in integration_test directory relative to the current
 /// binary under test
 pub fn run_pytest() {
-    let mut cmd = std::process::Command::new(format!("venv/bin/python"));
+    let mut cmd = std::process::Command::new("venv/bin/python");
     cmd.arg("-m").arg("pytest").arg("integration_test/");
     let output = cmd.output().expect("Failed to run test");
     // For printing the output of the of the pytest tests
@@ -560,10 +557,10 @@ fn create_venv() {
     assert!(output.status.success());
 }
 fn install_deps() {
-    let mut cmd = std::process::Command::new(format!("venv/bin/pip"));
+    let mut cmd = std::process::Command::new("venv/bin/pip");
     cmd.arg("install")
         .arg("-r")
-        .arg(format!("integration_test/requirements.in"));
+        .arg("integration_test/requirements.in");
     let output = cmd.output().expect("Failed to install deps");
     assert!(output.status.success());
 }
@@ -664,11 +661,16 @@ impl Statistics {
         } else {
             let old_mean = self.mean;
             self.mean = old_mean + (value - old_mean) / self.samples as f64;
-            self.variance =
-                self.variance + (value - old_mean) * (value - self.mean);
+            self.variance += (value - old_mean) * (value - self.mean);
             self.min = self.min.min(value);
             self.max = self.max.max(value);
         }
+    }
+}
+
+impl Default for Statistics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -838,7 +840,7 @@ mod tests {
     async fn test_connection() -> Result<()> {
         let mut futures = Vec::new();
         let server = QuicServer::new(("127.0.0.1".parse()?, 0))?;
-        let server_addr = server.server.local_addr()?.clone();
+        let server_addr = server.server.local_addr()?;
 
         futures.push(tokio::spawn(async move {
             let incomming = server.server.accept();

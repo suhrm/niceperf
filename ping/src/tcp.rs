@@ -208,14 +208,13 @@ impl TCPClient {
                             result.rtt,
                             result.retrans
                         );
-                    } else {
-                        if recv_count.load(std::sync::atomic::Ordering::SeqCst)
-                            % 100
-                            == 0
-                        {
-                            println!("RTT: {}", stats);
-                            println!("PIAT: {}", stat_piat);
-                        }
+                    } else if recv_count
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                        % 100
+                        == 0
+                    {
+                        println!("RTT: {}", stats);
+                        println!("PIAT: {}", stat_piat);
                     }
                     recv_count
                         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
