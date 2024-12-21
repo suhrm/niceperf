@@ -9,10 +9,11 @@ use common::{
     interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Logger, Statistics,
 };
 use etherparse::{IcmpEchoHeader, Icmpv4Header, Icmpv4Type};
+use serde::{Deserialize, Serialize};
 use tokio_util::bytes::{Bytes, BytesMut};
 
 use crate::{args, logger::PingResult};
-pub struct Test {
+pub struct PingerClient {
     /// Logger
     logger: Option<Logger<PingResult>>,
     /// Common options
@@ -32,50 +33,88 @@ pub struct Test {
     rtt_stats: Statistics,
 }
 
-struct HandleClient<Echo, Reply> {
+pub struct HandleClient<Echo, Reply> {
     tx: tokio::sync::mpsc::Sender<Echo>,
     rx: tokio::sync::mpsc::Receiver<Reply>,
+    identifier: u16,
     stop: tokio::sync::oneshot::Sender<()>,
 }
+
+pub type ICMPClientHandle = HandleClient<ICMPEcho, PingResult>;
+
 impl HandleClient<ICMPEcho, PingResult> {
-    fn new(args: args::ICMPOpts) -> Self {
+    pub fn new(args: &args::ICMPOpts) -> Self {
         let echo_queue = tokio::sync::mpsc::channel::<ICMPEcho>(100);
         let reply_queue = tokio::sync::mpsc::channel::<PingResult>(100);
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
 
-        let client =
-            PingClient::new(args, echo_queue.1, reply_queue.0, stop_rx);
-        run_icmp_pinger(client.unwrap()).unwrap();
+        let identifier = rand::random::<u16>();
+
+        let client = PingClient::new(
+            args,
+            echo_queue.1,
+            reply_queue.0,
+            stop_rx,
+            identifier,
+        )
+        .unwrap();
+        run_icmp_pinger(client).unwrap();
 
         Self {
             tx: echo_queue.0,
             rx: reply_queue.1,
             stop: stop_tx,
+            identifier,
         }
+    }
+    pub fn stop(&self) {
+        unimplemented!("Stop not implemented")
+    }
+    pub async fn send(&self, echo: ICMPEcho) -> Result<()> {
+        self.tx
+            .send(echo)
+            .await
+            .map_err(|_| anyhow!("Failed to send"))?;
+        Ok(())
+    }
+    pub async fn recv(&mut self) -> Option<PingResult> {
+        self.rx.recv().await
+    }
+    pub fn identifier(&self) -> u16 {
+        self.identifier
     }
 }
 
-struct PingClient<T, Echo, Reply> {
-    socket: T,
+struct PingClient<Transport, Echo, Reply> {
+    socket: Transport,
     send_queue: tokio::sync::mpsc::Receiver<Echo>,
     recv_queue: tokio::sync::mpsc::Sender<Reply>,
     stop: tokio::sync::oneshot::Receiver<()>,
     identifier: u16,
 }
 
-struct ICMPEcho {
-    icmp: IcmpEchoHeader,
-    payload: Bytes,
+pub struct ICMPEcho {
+    pub icmp: IcmpEchoHeader,
+    pub payload: Payload, /* make the payload a struct instead of "just"
+                           * abitrairy bytes as we expect a specific format
+                           * anyway */
+}
+#[derive(Serialize, Deserialize)]
+pub struct Payload {
+    pub data: Vec<u8>,
+    pub seq: u128,
+    pub timestamp: u128,
 }
 
 type ICMPPinger = PingClient<AsyncICMPSocket, ICMPEcho, PingResult>;
 
 impl PingClient<AsyncICMPSocket, ICMPEcho, PingResult> {
     pub fn new(
-        args: args::ICMPOpts,
+        args: &args::ICMPOpts,
         send_queue: tokio::sync::mpsc::Receiver<ICMPEcho>,
         recv_queue: tokio::sync::mpsc::Sender<PingResult>,
         stop: tokio::sync::oneshot::Receiver<()>,
+        identifier: u16,
     ) -> Result<Self> {
         let iface = args.common_opts.iface.clone();
 
@@ -93,27 +132,28 @@ impl PingClient<AsyncICMPSocket, ICMPEcho, PingResult> {
             send_queue,
             recv_queue,
             stop,
-            identifier: rand::random::<u16>(),
+            identifier,
         })
     }
 }
 
 fn run_icmp_pinger(mut pinger: ICMPPinger) -> Result<()> {
     tokio::spawn(async move {
-        let mut buffer = BytesMut::with_capacity(65_535);
+        let mut buffer = [0u8; 65536];
         loop {
             tokio::select! {
                             Some(echo) = pinger.send_queue.recv() => {
+                                let payload_bytes = bincode::serialize(&echo.payload)?;
                                 let icmp_packet = {
                                     [
                                         Icmpv4Header::with_checksum(
                                             Icmpv4Type::EchoRequest(
                                             echo.icmp),
-                                            echo.payload.as_ref()// Payload for checksum
+                                            payload_bytes.as_slice()// Payload for checksum
                                         )
                                         .to_bytes()
                                         .as_slice(),
-                                        echo.payload.as_ref(),
+                                            payload_bytes.as_slice()// Payload for checksum
                                     ]
                                     .concat() // Concatenate header and payload
                                 };
@@ -121,7 +161,7 @@ fn run_icmp_pinger(mut pinger: ICMPPinger) -> Result<()> {
                                 pinger.socket.send(&icmp_packet).await?;
                             },
                             Ok(len) = pinger.socket.read(&mut buffer) => {
-                                if let Ok(ping_result) = parse_icmp_packet(&buffer, len) {
+                                if let Ok(ping_result) = parse_icmp_packet(&buffer, len, pinger.identifier) {
                                     pinger.recv_queue.send(ping_result).await?;
                                 }
             }
@@ -133,32 +173,45 @@ fn run_icmp_pinger(mut pinger: ICMPPinger) -> Result<()> {
     Ok(())
 }
 
-fn parse_icmp_packet(buffer: &[u8], len: usize) -> Result<PingResult> {
-    let icmp_header = Icmpv4Header::from_slice(&buffer[..len])?;
+fn parse_icmp_packet(
+    buffer: &[u8],
+    len: usize,
+    identifier: u16,
+) -> Result<PingResult> {
+    let ipv4_hdr = etherparse::Ipv4HeaderSlice::from_slice(&buffer[..20])?;
+    let icmp_header = Icmpv4Header::from_slice(&buffer[20..len])?;
     let reply_header = match icmp_header.0.icmp_type {
         Icmpv4Type::EchoReply(header) => {
             // Check if the packet is a reply to our packet
             if header.id == identifier {
                 header
             } else {
-                println!("Received reply, but not our packet");
-                return None;
+                return Err(anyhow!("Received reply, but not our packet"));
             }
         }
         _ => {
-            println!("Received non-echo reply packet");
-            return None;
+            return Err(anyhow!("Received non-echo reply"));
         }
     };
+    let reply_payload = bincode::deserialize::<Payload>(icmp_header.1)?;
+    let recv_timestamp = std::time::Duration::from(nix::time::clock_gettime(
+        nix::time::ClockId::CLOCK_MONOTONIC,
+    )?)
+    .as_nanos() as u128;
+    let send_timestamp = reply_payload.timestamp;
+    let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
+    let ttl = buffer[8];
+    let seq_internal = reply_payload.seq;
     let ping_result = PingResult {
-        seq: icmp_echo.sequence_number,
-        unique_seq: icmp_echo.identifier as u128,
-        ttl: icmp_packet.ttl,
-        rtt: icmp_echo.timestamp as f64,
+        seq: reply_header.seq,
+        unique_seq: seq_internal,
+        ttl,
+        rtt,
         size: len,
-        send_timestamp: icmp_echo.timestamp,
-        recv_timestamp: icmp_echo.timestamp_reply,
-        dst_addr: pinger.socket.dst_addr().to_string(),
-        src_addr: pinger.socket.src_addr().to_string(),
+        send_timestamp,
+        recv_timestamp,
+        dst_addr: ipv4_hdr.destination_addr().to_string(),
+        src_addr: ipv4_hdr.source_addr().to_string(),
     };
+    Ok(ping_result)
 }

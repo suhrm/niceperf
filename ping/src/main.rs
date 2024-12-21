@@ -1,18 +1,11 @@
-
-
 use clap::Parser;
 mod args;
 mod icmp;
+mod icmp_new;
 mod logger;
 mod tcp;
 mod udp;
-mod icmp_new;
 use anyhow::Result;
-
-
-
-
-
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -29,8 +22,8 @@ async fn main() -> Result<()> {
                     client.run().await?;
                 }
                 args::Protocol::Icmp(opts) => {
-                    let mut client = icmp::ICMPClient::new(opts)?;
-                    client.run().await?;
+                    let client = icmp::ICMPClient::new(opts)?;
+					icmp::run(client).await?;
                 }
             }
         }
