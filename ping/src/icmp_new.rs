@@ -1,13 +1,12 @@
 use std::{
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
 
 use anyhow::{anyhow, Result};
 use common::{
-    interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Logger, Statistics,
-    UDPSocket,
+    interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Logger, Statistics, TCPSocket, UDPSocket
 };
 use etherparse::{IcmpEchoHeader, Icmpv4Header, Icmpv4Type};
 use serde::{Deserialize, Serialize};
@@ -15,7 +14,7 @@ use tokio_util::bytes::{Bytes, BytesMut};
 
 use crate::{
     args,
-    logger::{PingResult, UDPEchoResult},
+    logger::{PingResult, TCPEchoResult, UDPEchoResult},
 };
 pub struct PingerClient {
     /// Logger
@@ -88,6 +87,103 @@ impl HandleClient<ICMPEcho, PingResult> {
         self.identifier
     }
 }
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+struct TcpEchoPacket {
+    identifier: u16,
+    send_timestamp: u128,
+    recv_timestamp: u128,
+    seq: u128,
+    #[serde(with = "serde_bytes")]
+    payload: Vec<u8>,
+}
+pub type TCPClientHandle = HandleClient<TcpEchoPacket, UDPEchoResult>;
+
+impl HandleClient<TcpEchoPacket, TCPEchoResult> {
+    pub fn new(args: &args::TCPOpts) -> Self {
+        let echo_queue = tokio::sync::mpsc::channel::<TcpEchoPacket>(100);
+        let reply_queue = tokio::sync::mpsc::channel::<TCPEchoResult>(100);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let identifier = rand::random::<u16>();
+
+        let client = TCPPingerClient::new(
+            args,
+            echo_queue.1,
+            reply_queue.0,
+            stop_rx,
+            identifier,
+        )
+        .unwrap();
+        run_tcp_pinger(client).unwrap();
+
+        Self {
+            tx: echo_queue.0,
+            rx: reply_queue.1,
+            stop: stop_tx,
+            identifier,
+        }
+    }
+    pub fn stop(&self) {
+        unimplemented!("Stop not implemented")
+    }
+    pub async fn send(&self, echo: TcpEchoPacket) -> Result<()> {
+        self.tx
+            .send(echo)
+            .await
+            .map_err(|_| anyhow!("Failed to send"))?;
+        Ok(())
+    }
+    pub async fn recv(&mut self) -> Option<TCPEchoResult> {
+        self.rx.recv().await
+    }
+
+    pub fn identifier(&self) -> u16 {
+        self.identifier
+    }
+}
+
+type TCPPingerClient =
+    PingClient<tokio::net::TcpStream, TcpEchoPacket, TCPEchoResult>;
+
+impl PingClient<tokio::net::TcpStream, TcpEchoPacket, TCPEchoResult> {
+    pub fn new(
+        args: &args::TCPOpts,
+        send_queue: tokio::sync::mpsc::Receiver<TcpEchoPacket>,
+        recv_queue: tokio::sync::mpsc::Sender<TCPEchoResult>,
+        stop: tokio::sync::oneshot::Receiver<()>,
+        identifier: u16,
+    ) -> Result<Self> {
+        let iface = args.common_opts.iface.clone();
+        let src_addr = match args.common_opts.src_addr {
+            Some(addr) => addr,
+            None => interface_to_ipaddr(iface.as_ref().unwrap())?,
+        };
+
+        let src_port = args.src_port.unwrap_or(0);
+
+        let dst_addr = args.common_opts.dst_addr;
+        let dst_port = args.dst_port;
+        let socket = TCPSocket::new(
+            iface.as_deref(),
+            Some((src_addr, src_port)),
+            args.mss,
+            args.cc.clone(),
+        )?;
+        socket.connect(SocketAddr::new(dst_addr, dst_port))?;
+        let socket = tokio::net::TcpStream::from_std(
+            socket.get_ref().try_clone()?.try_into()?,
+        )?;
+        Ok(Self {
+            socket,
+            send_queue,
+            recv_queue,
+            stop,
+            identifier,
+        })
+    }
+}
+
 pub type UDPClientHandle = HandleClient<UdpEchoPacket, UDPEchoResult>;
 
 impl HandleClient<UdpEchoPacket, UDPEchoResult> {
@@ -284,6 +380,30 @@ fn run_udp_pinger(mut pinger: UDPPingerClient) -> Result<()> {
         }
         Ok::<(), anyhow::Error>(())
     });
+
+    Ok(())
+}
+
+fn run_tcp_pinger(mut pinger: TCPPingerClient) -> Result<()> {
+    // tokio::spawn(async move {
+    // 	let mut buffer = [0u8; 65536];
+    // 	loop {
+    // 		tokio::select! {
+    // 			Some(echo) = pinger.send_queue.recv() => {
+    // 				let payload_bytes = bincode::serialize(&echo)?;
+    // 				pinger.socket.send(&payload_bytes).await?;
+    // 			},
+    // 			Ok((len, addr_info)) = pinger.socket.recv_from(&mut buffer) => {
+    // 				if let Ok(udp_echo_result) = parse_udp_packet(&buffer, len,
+    // pinger.identifier, addr_info, pinger.socket.local_addr()?){
+    // 					pinger.recv_queue.send(udp_echo_result).await?;
+    // 				}
+    // 			}
+    // 			_ =&mut pinger.stop => { break; },
+    // 		}
+    // 	}
+    // 	Ok::<(), anyhow::Error>(())
+    // });
 
     Ok(())
 }
