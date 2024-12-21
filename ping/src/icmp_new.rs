@@ -7,12 +7,16 @@ use std::{
 use anyhow::{anyhow, Result};
 use common::{
     interface_to_ipaddr, AsyncICMPSocket, ICMPSocket, Logger, Statistics,
+    UDPSocket,
 };
 use etherparse::{IcmpEchoHeader, Icmpv4Header, Icmpv4Type};
 use serde::{Deserialize, Serialize};
 use tokio_util::bytes::{Bytes, BytesMut};
 
-use crate::{args, logger::PingResult};
+use crate::{
+    args,
+    logger::{PingResult, UDPEchoResult},
+};
 pub struct PingerClient {
     /// Logger
     logger: Option<Logger<PingResult>>,
@@ -50,7 +54,7 @@ impl HandleClient<ICMPEcho, PingResult> {
 
         let identifier = rand::random::<u16>();
 
-        let client = PingClient::new(
+        let client = ICMPPinger::new(
             args,
             echo_queue.1,
             reply_queue.0,
@@ -84,6 +88,51 @@ impl HandleClient<ICMPEcho, PingResult> {
         self.identifier
     }
 }
+pub type UDPClientHandle = HandleClient<UdpEchoPacket, UDPEchoResult>;
+
+impl HandleClient<UdpEchoPacket, UDPEchoResult> {
+    pub fn new(args: &args::UDPOpts) -> Self {
+        let echo_queue = tokio::sync::mpsc::channel::<UdpEchoPacket>(100);
+        let reply_queue = tokio::sync::mpsc::channel::<UDPEchoResult>(100);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let identifier = rand::random::<u16>();
+
+        let client = UDPPingerClient::new(
+            args,
+            echo_queue.1,
+            reply_queue.0,
+            stop_rx,
+            identifier,
+        )
+        .unwrap();
+        run_udp_pinger(client).unwrap();
+
+        Self {
+            tx: echo_queue.0,
+            rx: reply_queue.1,
+            stop: stop_tx,
+            identifier,
+        }
+    }
+    pub fn stop(&self) {
+        unimplemented!("Stop not implemented")
+    }
+    pub async fn send(&self, echo: UdpEchoPacket) -> Result<()> {
+        self.tx
+            .send(echo)
+            .await
+            .map_err(|_| anyhow!("Failed to send"))?;
+        Ok(())
+    }
+    pub async fn recv(&mut self) -> Option<UDPEchoResult> {
+        self.rx.recv().await
+    }
+
+    pub fn identifier(&self) -> u16 {
+        self.identifier
+    }
+}
 
 struct PingClient<Transport, Echo, Reply> {
     socket: Transport,
@@ -104,6 +153,15 @@ pub struct Payload {
     pub data: Vec<u8>,
     pub seq: u128,
     pub timestamp: u128,
+}
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+struct UdpEchoPacket {
+    identifier: u16,
+    send_timestamp: u128,
+    recv_timestamp: u128,
+    seq: u128,
+    #[serde(with = "serde_bytes")]
+    payload: Vec<u8>,
 }
 
 type ICMPPinger = PingClient<AsyncICMPSocket, ICMPEcho, PingResult>;
@@ -129,6 +187,41 @@ impl PingClient<AsyncICMPSocket, ICMPEcho, PingResult> {
 
         Ok(PingClient {
             socket: AsyncICMPSocket::new(socket)?,
+            send_queue,
+            recv_queue,
+            stop,
+            identifier,
+        })
+    }
+}
+
+type UDPPingerClient =
+    PingClient<tokio::net::UdpSocket, UdpEchoPacket, UDPEchoResult>;
+
+impl PingClient<tokio::net::UdpSocket, UdpEchoPacket, UDPEchoResult> {
+    pub fn new(
+        args: &args::UDPOpts,
+        send_queue: tokio::sync::mpsc::Receiver<UdpEchoPacket>,
+        recv_queue: tokio::sync::mpsc::Sender<UDPEchoResult>,
+        stop: tokio::sync::oneshot::Receiver<()>,
+        identifier: u16,
+    ) -> Result<Self> {
+        let iface = args.common_opts.iface.clone();
+        let src_addr = match args.common_opts.src_addr {
+            Some(addr) => addr,
+            None => interface_to_ipaddr(iface.as_ref().unwrap())?,
+        };
+
+        let src_port = args.src_port.unwrap_or(0);
+
+        let dst_addr = args.common_opts.dst_addr;
+        let dst_port = args.dst_port;
+        let socket = std::net::UdpSocket::bind((src_addr, src_port))?;
+        socket.connect((dst_addr, dst_port))?;
+        let socket = tokio::net::UdpSocket::from_std(socket)?;
+        socket.bind_device(iface.as_deref().map(|s| s.as_bytes()))?;
+        Ok(Self {
+            socket,
             send_queue,
             recv_queue,
             stop,
@@ -170,6 +263,28 @@ fn run_icmp_pinger(mut pinger: ICMPPinger) -> Result<()> {
         }
         Ok::<(), anyhow::Error>(())
     });
+    Ok(())
+}
+fn run_udp_pinger(mut pinger: UDPPingerClient) -> Result<()> {
+    tokio::spawn(async move {
+        let mut buffer = [0u8; 65536];
+        loop {
+            tokio::select! {
+                Some(echo) = pinger.send_queue.recv() => {
+                    let payload_bytes = bincode::serialize(&echo)?;
+                    pinger.socket.send(&payload_bytes).await?;
+                },
+                Ok((len, addr_info)) = pinger.socket.recv_from(&mut buffer) => {
+                    if let Ok(udp_echo_result) = parse_udp_packet(&buffer, len, pinger.identifier, addr_info, pinger.socket.local_addr()?){
+                        pinger.recv_queue.send(udp_echo_result).await?;
+                    }
+                }
+                _ =&mut pinger.stop => { break; },
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    });
+
     Ok(())
 }
 
@@ -214,4 +329,36 @@ fn parse_icmp_packet(
         src_addr: ipv4_hdr.source_addr().to_string(),
     };
     Ok(ping_result)
+}
+
+fn parse_udp_packet(
+    buffer: &[u8],
+    len: usize,
+    identifier: u16,
+    src_addr: std::net::SocketAddr,
+    dst_addr: std::net::SocketAddr,
+) -> Result<UDPEchoResult> {
+    let reply_payload = bincode::deserialize::<UdpEchoPacket>(&buffer[..len])?;
+    if reply_payload.identifier != identifier {
+        return Err(anyhow!("Received reply, but not our packet"));
+    }
+    let recv_timestamp = std::time::Duration::from(nix::time::clock_gettime(
+        nix::time::ClockId::CLOCK_MONOTONIC,
+    )?)
+    .as_nanos() as u128;
+    let send_timestamp = reply_payload.send_timestamp;
+    let rtt = ((recv_timestamp - send_timestamp) as f64) / 1e6;
+    let ttl = buffer[8];
+    let seq_internal = reply_payload.seq;
+    let udp_echo_result = UDPEchoResult {
+        seq: seq_internal,
+        send_timestamp,
+        server_timestamp: reply_payload.recv_timestamp,
+        recv_timestamp,
+        rtt,
+        size: len,
+        src_addr: src_addr.to_string(),
+        dst_addr: dst_addr.to_string(),
+    };
+    Ok(udp_echo_result)
 }

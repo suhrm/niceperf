@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
                 }
                 args::Protocol::Icmp(opts) => {
                     let client = icmp::ICMPClient::new(opts)?;
-					icmp::run(client).await?;
+					icmp::Runner::run(client).await?;
                 }
             }
         }

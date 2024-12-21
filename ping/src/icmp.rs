@@ -67,9 +67,28 @@ impl ICMPClient {
 			internal_couter: 0,
         })
     }
+	pub async  fn handle_result(&mut self, result: PingResult) -> Result<()> {
+		self.rtt_stats.update(result.rtt);
+		if let Some(logger) = &mut self.logger {
+			logger.log(&result).await?;
+		} else {
+			println!(
+				"{} bytes from {}: icmp_pay_seq={} time={:.3} ms ",
+				result.size,
+				result.src_addr,
+				result.seq,
+				result.rtt,
+			);
+		}
+		Ok(())
+			
+	}
 }
 
-pub async fn run(mut client: ICMPClient) -> Result<()> {
+pub struct Runner{}
+impl Runner{
+
+ pub async fn run(mut client: ICMPClient) -> Result<()> {
     // TODO: Add support for timeout
     let _timeout_tracker =
         tokio::time::interval(std::time::Duration::from_millis(10 * 1000));
@@ -103,14 +122,8 @@ pub async fn run(mut client: ICMPClient) -> Result<()> {
 
 },
                             Some(result) = client.handle.recv() => {
-                                client.rtt_stats.update(result.rtt);
-                        println!(
-                            "{} bytes from {}: icmp_pay_seq={} time={:.3} ms ",
-                            result.size,
-                            result.src_addr,
-                            result.seq,
-                            result.rtt,
-                        );
+								client.handle_result(result).await?;
+							
 
                             }
 
@@ -120,4 +133,5 @@ pub async fn run(mut client: ICMPClient) -> Result<()> {
     })
     .await?;
     Ok(())
+}
 }
